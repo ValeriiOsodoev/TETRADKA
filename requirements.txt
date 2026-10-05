@@ -1,0 +1,3 @@
+# Python 3.9 получит Starlette 0.4x, Python 3.10 и новее — Starlette 1.x. Код работает с обеими.
+starlette>=0.40,<2
+uvicorn>=0.30

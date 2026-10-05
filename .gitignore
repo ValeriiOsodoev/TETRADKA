@@ -1,0 +1,8 @@
+# база с аккаунтами и прогрессом — в репозиторий не кладём
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+tests/algo-tasks.json

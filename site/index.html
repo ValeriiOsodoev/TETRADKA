@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тетрадка — математика и алгоритмы с самого начала</title>
+  <meta name="description" content="Бесплатный учебный сайт: математика с первого класса и алгоритмы на Python. Короткие объяснения, интерактивные картинки, задачи с проверкой.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script>
+    // тему выставляем до отрисовки, чтобы страница не мигала
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('tetradka.theme'); } catch (e) {}
+      var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip" href="#main">К содержанию</a>
+  <header class="site-header" id="header"></header>
+  <main id="main" tabindex="-1"></main>
+  <footer class="site-footer" id="footer"></footer>
+  <noscript><p style="padding:2rem;max-width:40rem;margin:auto">Сайту нужен JavaScript: на нём работают интерактивные картинки, тренировка и запуск Python.</p></noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
