@@ -1,0 +1,11 @@
+[Unit]
+Description=Tetradka: daily database backup
+
+[Service]
+Type=oneshot
+User=tetradka
+Group=tetradka
+ExecStart=/opt/tetradka/.venv/bin/python /opt/tetradka/deploy/backup.py
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tetradka

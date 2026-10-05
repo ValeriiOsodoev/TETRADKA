@@ -1,0 +1,94 @@
+# Выкладка сайта на сервер: при каждом пуше в main и по кнопке «Run workflow».
+#
+# Секреты репозитория (Settings → Secrets and variables → Actions):
+#   HOST, SSH_PORT, USER   — адрес сервера, порт SSH и пользователь
+#   SSH_KEY                — закрытый ключ для входа
+#   SSH_KNOWN_HOSTS        — строка(и) из known_hosts для сервера: ssh-keyscan -p ПОРТ АДРЕС
+#   PASS                   — пароль для sudo (не используется, если USER — root или sudo без пароля)
+#   DOMAIN                 — домен сайта без https://, например tetradka.example.com
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверки перед выкладкой
+        run: |
+          node tests/math-check.mjs
+          python3 tests/algo-check.py
+
+      - name: Подготовить SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Отправить код на сервер
+        env:
+          HOST: ${{ secrets.HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.USER }}
+        run: |
+          SSH="ssh -i $HOME/.ssh/deploy_key -p ${SSH_PORT:-22} -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          tar czf - --exclude=.git --exclude=.github . \
+            | $SSH "$SSH_USER@$HOST" 'rm -rf "$HOME/tetradka-release" && mkdir -p "$HOME/tetradka-release" && tar xzf - -C "$HOME/tetradka-release"'
+
+      - name: Установить и перезапустить
+        env:
+          HOST: ${{ secrets.HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.USER }}
+          SUDO_PASS: ${{ secrets.PASS }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+        run: |
+          SSH="ssh -i $HOME/.ssh/deploy_key -p ${SSH_PORT:-22} -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          # Пароль для sudo уходит на сервер через стандартный ввод — в командной строке и в журнале его нет.
+          printf '%s\n' "$SUDO_PASS" | $SSH "$SSH_USER@$HOST" "
+            set -e
+            if [ \"\$(id -u)\" = 0 ]; then
+              cat > /dev/null
+              sh \"\$HOME/tetradka-release/deploy/server-setup.sh\" \"\$HOME/tetradka-release\" '$DOMAIN'
+            else
+              sudo -S -p '' sh \"\$HOME/tetradka-release/deploy/server-setup.sh\" \"\$HOME/tetradka-release\" '$DOMAIN'
+            fi
+            rm -rf \"\$HOME/tetradka-release\"
+          "
+
+      - name: Проверить сайт снаружи
+        env:
+          DOMAIN: ${{ secrets.DOMAIN }}
+        run: |
+          if [ -z "$DOMAIN" ]; then
+            echo "::warning::Секрет DOMAIN пуст — сайт установлен, но снаружи не опубликован."
+            exit 0
+          fi
+          # сертификат HTTPS при первой выкладке выпускается не мгновенно — ждём до двух минут
+          for i in $(seq 1 24); do
+            if curl -fsS --max-time 10 "https://$DOMAIN/api/me" > /dev/null; then
+              echo "Сайт отвечает по HTTPS."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Сайт установлен на сервере, но по адресу домена не отвечает. Проверьте, что DNS-запись домена указывает на сервер и что порты 80 и 443 открыты; подробности — в шаге «Установить и перезапустить»."
+          exit 1

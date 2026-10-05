@@ -1,0 +1,5 @@
+# Caddy сам получает и продлевает сертификат HTTPS для домена.
+__DOMAIN__ {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:__PORT__
+}

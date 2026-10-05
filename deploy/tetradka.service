@@ -1,0 +1,24 @@
+# Служба сайта «Тетрадка». Ставится скриптом deploy/server-setup.sh.
+[Unit]
+Description=Tetradka: math and algorithms site
+After=network.target
+
+[Service]
+User=tetradka
+Group=tetradka
+WorkingDirectory=/opt/tetradka
+EnvironmentFile=/etc/tetradka.env
+# Один процесс: ограничение попыток входа хранится в его памяти (см. README).
+ExecStart=/opt/tetradka/.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port ${TETRADKA_PORT}
+Restart=always
+RestartSec=3
+
+# Процессу нужна на запись только папка с базой.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tetradka
+
+[Install]
+WantedBy=multi-user.target
