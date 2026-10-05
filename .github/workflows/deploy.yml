@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Проверки перед выкладкой
         run: |
@@ -63,6 +63,8 @@ jobs:
         run: |
           SSH="ssh -i $HOME/.ssh/deploy_key -p ${SSH_PORT:-22} -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
           # Пароль для sudo уходит на сервер через стандартный ввод — в командной строке и в журнале его нет.
+          set -o pipefail
+          code=0
           printf '%s\n' "$SUDO_PASS" | $SSH "$SSH_USER@$HOST" "
             set -e
             if [ \"\$(id -u)\" = 0 ]; then
@@ -72,7 +74,14 @@ jobs:
               sudo -S -p '' sh \"\$HOME/tetradka-release/deploy/server-setup.sh\" \"\$HOME/tetradka-release\" '$DOMAIN'
             fi
             rm -rf \"\$HOME/tetradka-release\"
-          "
+          " 2>&1 | tee "$RUNNER_TEMP/setup.log" || code=$?
+          # Конец вывода дублируем в сводку запуска: причину сбоя видно, не открывая журнал.
+          summary() { tail -n "$1" "$RUNNER_TEMP/setup.log" | sed -e 's/%/%25/g' -e 's/\r//g' | awk 'NR > 1 { printf "%%0A" } { printf "%s", $0 }'; }
+          if [ "$code" -ne 0 ]; then
+            echo "::error title=Установка на сервере не удалась (код $code)::$(summary 25)"
+            exit "$code"
+          fi
+          echo "::notice title=Сервер::$(summary 4)"
 
       - name: Проверить сайт снаружи
         env:
