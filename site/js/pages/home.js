@@ -55,6 +55,12 @@ export function homePage() {
     ]),
   );
 
+  const sqlCol = h('section.home-col.home-sql',
+    h('h2', h('a', { href: '/sql/' }, 'SQL')),
+    h('p', 'Подготовка к экзамену по SQL в Школе 21: теория простыми словами, картинка выполнения запроса, задачи с проверкой в настоящем PostgreSQL прямо в браузере, повторения и пробный экзамен.'),
+    h('p', h('a.btn', { href: '/sql/' }, 'Открыть SQL')),
+  );
+
   const how = h('section.how',
     h('h2', 'Как устроена каждая тема'),
     h('ol.how-steps',
@@ -67,7 +73,7 @@ export function homePage() {
 
   return {
     title: '',
-    el: h('div.page.home', hero, status, h('div.home-cols', mathCol, algoCol), how),
+    el: h('div.page.home', hero, status, h('div.home-cols', mathCol, algoCol), sqlCol, how),
     onLeave: demo.destroy,
   };
 }

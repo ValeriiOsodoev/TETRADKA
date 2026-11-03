@@ -601,6 +601,8 @@ input[type="range"] { width: 100%; accent-color: var(--pen); height: 24px; margi
 .home-col h2 a { color: var(--ink); text-decoration: none; }
 .home-col h2 a:hover { color: var(--pen); }
 .home-col > p { color: var(--ink-2); margin: 8px 0 14px; max-width: 30rem; }
+.home-sql { border-top: 1.5px solid var(--ink); padding-top: 28px; margin-top: 40px; }
+.home-sql > p { max-width: 44rem; }
 .home-list { list-style: none; }
 .home-list a { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 8px 10px; margin: 0 -10px; border-radius: 6px; border-bottom: 1px solid var(--cell); text-decoration: none; color: var(--ink); }
 .home-list li:last-child a { border-bottom: 0; }

@@ -78,7 +78,7 @@ function drawHeader(path) {
   clear(header).append(
     h('div.header-inner',
       h('a.brand', { href: '#/', 'aria-label': `${SITE_NAME} — на главную` }, h('span.brand-mark', { 'aria-hidden': 'true' }), SITE_NAME),
-      h('nav.main-nav', { 'aria-label': 'Разделы' }, link('#/math', 'Математика'), link('#/algo', 'Алгоритмы')),
+      h('nav.main-nav', { 'aria-label': 'Разделы' }, link('#/math', 'Математика'), link('#/algo', 'Алгоритмы'), h('a', { href: '/sql/' }, 'SQL')),
       h('div.header-tools',
         h('button.tool', { type: 'button', 'aria-label': dark ? 'Светлая тема' : 'Тёмная тема', title: dark ? 'Светлая тема' : 'Тёмная тема', onclick: () => setTheme(dark ? 'light' : 'dark') }, icon(dark ? 'sun' : 'moon', 18)),
         user
@@ -93,7 +93,7 @@ function drawFooter() {
   clear(footer).append(
     h('div.footer-inner',
       h('p', `${SITE_NAME} — бесплатный учебный сайт по математике и алгоритмам.`),
-      h('p.footer-links', h('a', { href: '#/math' }, 'Математика'), h('a', { href: '#/algo' }, 'Алгоритмы'), h('a', { href: '#/algo/python' }, 'Основы Python'), h('a', { href: '#/me' }, 'Мой прогресс')),
+      h('p.footer-links', h('a', { href: '#/math' }, 'Математика'), h('a', { href: '#/algo' }, 'Алгоритмы'), h('a', { href: '#/algo/python' }, 'Основы Python'), h('a', { href: '/sql/' }, 'SQL к экзамену Школы 21'), h('a', { href: '#/me' }, 'Мой прогресс')),
     ),
   );
 }

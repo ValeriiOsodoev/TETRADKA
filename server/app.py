@@ -131,7 +131,7 @@ class ApiError(Exception):
 
 LOGIN_RE = re.compile(r"^[\w.\-]{3,24}$", re.UNICODE)
 TOPIC_RE = re.compile(r"^[a-z0-9\-]{1,64}$")
-KINDS = {"math", "algo"}
+KINDS = {"math", "algo", "sql"}
 
 
 def clean_login(value) -> str:
