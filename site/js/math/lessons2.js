@@ -50,11 +50,14 @@ export const divisibility = [
       () => {
         const d = pick([3, 9]);
         const good = d * ri(120, 1100);
-        const bad = [1, 2, 3].map(() => {
+        // три разных числа, которые не делятся на d (и не совпадают с правильным)
+        const badSet = new Set();
+        while (badSet.size < 3) {
           let v = ri(1000, 9999);
           while (v % d === 0) v += 1;
-          return v;
-        });
+          if (v !== good) badSet.add(v);
+        }
+        const bad = [...badSet];
         return choice(`Какое из чисел делится на ${d}?`, String(good), bad.map(String), `У числа ${good} сумма цифр равна ${digitSum(good)} — она делится на ${d}.`);
       },
       () => {
