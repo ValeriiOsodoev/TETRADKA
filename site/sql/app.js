@@ -178,7 +178,8 @@ function joinAdvice(sql) {
   const clean = stripSql(sql);
   if (!/\bjoin\b/i.test(clean)) return '';
   const ons = [...clean.matchAll(/\bon\s+([\s\S]*?)(?=\b(?:join|left|right|full|inner|cross|where|order|group|limit|union|intersect|except)\b|$)/gi)].map((m) => m[1]);
-  if (ons.some((on) => /\b[a-z_]\w*\.id\s*=\s*[a-z_]\w*\.id\b/i.test(on))) return 'Похоже, в ON сравниваются два id. Так совпадает номер строки одной таблицы с номером строки другой, а это случайное совпадение. Склеивать нужно по ссылке: например, po.person_id = p.id (номерок человека в заказе равен номеру человека).';
+  if (ons.some((on) => /\b[a-z_]\w*\.id\s*=\s*[a-z_]\w*\.id\b/i.test(on))) return 'В ON сравниваются два id: номер строки одной таблицы с номером строки другой. Это случайное совпадение, а не связь. Посмотри схему под задачей: склеивать нужно по стрелке «ссылка → id», например po.person_id = p.id. Если стрелки между таблицами нет и нужны все пары, это CROSS JOIN без ON.';
+  if (false) return 'Похоже, в ON сравниваются два id. Так совпадает номер строки одной таблицы с номером строки другой, а это случайное совпадение. Склеивать нужно по ссылке: например, po.person_id = p.id (номерок человека в заказе равен номеру человека).';
   return 'Проверь условия ON у каждого JOIN: склеивать нужно по ссылке «таблица_id = id», например po.person_id = p.id. Потом проверь WHERE.';
 }
 async function check(sql, task) {
@@ -594,6 +595,67 @@ const tablesOf = (sql) => {
 };
 const tablesHTML = (sql) => { const t = tablesOf(sql); return `<p class="tables">${t.length > 1 ? 'Таблицы' : 'Таблица'}: ${t.map((x) => `<code>${x}</code>`).join(', ')}</p>`; };
 
+/* ================= схема связей: таблицы и стрелки «ссылка → id» ================= */
+const MAP = {
+  person: { x: 20, y: 20, cols: ['id', 'name', 'age', 'gender', 'address'] },
+  person_visits: { x: 310, y: 20, cols: ['id', 'person_id', 'pizzeria_id', 'visit_date'] },
+  pizzeria: { x: 600, y: 20, cols: ['id', 'name', 'rating'] },
+  person_order: { x: 310, y: 190, cols: ['id', 'person_id', 'menu_id', 'order_date'] },
+  menu: { x: 600, y: 190, cols: ['id', 'pizzeria_id', 'pizza_name', 'price'] },
+};
+const LINKS = [
+  { from: 'person_visits', col: 'person_id', to: 'person' },
+  { from: 'person_visits', col: 'pizzeria_id', to: 'pizzeria' },
+  { from: 'person_order', col: 'person_id', to: 'person' },
+  { from: 'person_order', col: 'menu_id', to: 'menu' },
+  { from: 'menu', col: 'pizzeria_id', to: 'pizzeria' },
+];
+const TW = 160, HEAD = 28, ROW = 20;
+const rowY = (t, c) => MAP[t].y + HEAD + ROW * MAP[t].cols.indexOf(c) + ROW / 2 + 3;
+// путь между двумя таблицами по стрелкам (поиск в ширину)
+function linkPath(a, b) {
+  const prev = new Map([[a, null]]), q = [a];
+  while (q.length) {
+    const t = q.shift(); if (t === b) break;
+    for (const l of LINKS) { const n = l.from === t ? l.to : l.to === t ? l.from : null; if (n && !prev.has(n)) { prev.set(n, t); q.push(n); } }
+  }
+  const path = []; let t = b; while (t) { path.unshift(t); t = prev.get(t); }
+  return path;
+}
+function schemaMap(tables = [], { note = true } = {}) {
+  const on = new Set(tables);
+  const H = Math.max(...Object.values(MAP).map((t) => t.y + HEAD + ROW * t.cols.length + 8));
+  const lines = LINKS.map((l) => {
+    const A = MAP[l.from], B = MAP[l.to];
+    const y1 = rowY(l.from, l.col), y2 = rowY(l.to, 'id');
+    let x1, x2, d;
+    if (A.x === B.x) { x1 = A.x; x2 = B.x; d = `M${x1},${y1} C${x1 - 46},${y1} ${x2 - 46},${y2} ${x2 - 6},${y2}`; }
+    else if (A.x > B.x) { x1 = A.x; x2 = B.x + TW; const m = (x1 + x2) / 2; d = `M${x1},${y1} C${m},${y1} ${m},${y2} ${x2 + 6},${y2}`; }
+    else { x1 = A.x + TW; x2 = B.x; const m = (x1 + x2) / 2; d = `M${x1},${y1} C${m},${y1} ${m},${y2} ${x2 - 6},${y2}`; }
+    const hot = on.has(l.from) && on.has(l.to);
+    return `<path class="lk${hot ? ' hot' : ''}" d="${d}" marker-end="url(#ah${hot ? 'h' : ''})"><title>${l.from}.${l.col} = ${l.to}.id</title></path>`;
+  }).join('');
+  const boxes = Object.entries(MAP).map(([name, t]) => {
+    const fk = new Set(LINKS.filter((l) => l.from === name).map((l) => l.col));
+    const hgt = HEAD + ROW * t.cols.length + 6;
+    return `<g class="tb${on.size ? (on.has(name) ? ' hot' : ' dim') : ''}" data-table="${name}" tabindex="0" role="button" aria-label="Таблица ${name}"><rect x="${t.x}" y="${t.y}" width="${TW}" height="${hgt}" rx="6"/><rect class="hd" x="${t.x}" y="${t.y}" width="${TW}" height="${HEAD - 4}" rx="6"/><text class="tn" x="${t.x + 10}" y="${t.y + 17}">${name}</text>${t.cols.map((c, i) => `<text class="${c === 'id' ? 'pk' : fk.has(c) ? 'fk' : 'cl'}" x="${t.x + 10}" y="${t.y + HEAD + ROW * i + 14}">${c === 'id' ? '🔑 ' : ''}${c}${fk.has(c) ? ' →' : ''}</text>`).join('')}</g>`;
+  }).join('');
+  let text = '';
+  if (note && on.size > 1) {
+    const list = [...on];
+    const direct = LINKS.filter((l) => on.has(l.from) && on.has(l.to));
+    const parts = direct.map((l) => `<code>${l.from}.${l.col} = ${l.to}.id</code>`);
+    const missing = [];
+    for (let i = 1; i < list.length; i++) {
+      const linked = direct.some((l) => [l.from, l.to].includes(list[i]));
+      if (!linked) { const pth = linkPath(list[0], list[i]); missing.push(`Между <code>${list[0]}</code> и <code>${list[i]}</code> прямой стрелки нет${pth.length > 2 ? `, они связаны только через другие таблицы: ${pth.map((x) => `<code>${x}</code>`).join(' — ')}` : ''}. Если в задаче нужны <b>все пары</b>, это CROSS JOIN без ON.`); }
+    }
+    text = `<div class="map-note">${parts.length ? `<p>Связи между таблицами задачи (это и есть условия ON): ${parts.join(', ')}.</p>` : ''}${missing.map((m) => `<p>${m}</p>`).join('')}</div>`;
+  }
+  return `<div class="schema schema-map"><div class="map-scroll"><svg viewBox="0 0 780 ${H}" role="img" aria-label="Схема связей между таблицами"><defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahd"/></marker><marker id="ahh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahh"/></marker></defs>${lines}${boxes}</svg></div>
+    <p class="map-legend"><span>🔑 id</span> номер строки, у каждой строки свой. <span class="fk">колонка_id →</span> ссылка: в ней лежит id строки из другой таблицы, стрелка показывает из какой. Нажми на таблицу, чтобы посмотреть её данные.</p>${text}</div>`;
+}
+
 function schemaHTML() {
   return `<div class="schema">${SCHEMA.map((t) => `<div class="sch-t"><button class="sch-name" type="button" data-table="${t.name}" title="Вставить SELECT * FROM ${t.name}">${t.name}</button><small>${esc(t.note)}</small><ul>${t.cols.map((c) => `<li>${c.replace(/→ (\w+)/, '<span class="fk">→ $1</span>')}</li>`).join('')}</ul></div>`).join('')}</div>`;
 }
@@ -719,6 +781,7 @@ views.learn = () => {
   $('#ex').append(r.el);
   document.querySelectorAll('.prose .demo').forEach(renderDemo);
   document.querySelectorAll('.prose .viz-inline').forEach((el) => visualize(el, el.dataset.sql));
+  document.querySelectorAll('.prose .map-inline').forEach((el) => { el.innerHTML = schemaMap((el.dataset.tables || '').split(',').filter(Boolean)); });
   document.querySelectorAll('.prose .demo-table').forEach(async (el) => { el.innerHTML = tableHTML(await run(`SELECT * FROM ${el.dataset.table} ORDER BY id`)); });
   st.lessons[l.id] = { ...(st.lessons[l.id] || {}), read: true }; store.save();
   bindTopicPick('learn');
@@ -751,7 +814,7 @@ views.practice = () => {
       ${tablesHTML(t.ref)}
       <div id="r"></div>
       <div class="hints" id="hints"></div>
-      <details class="schema-box" open><summary>Схема базы: какие таблицы и колонки есть</summary>${schemaHTML()}</details>
+      <details class="schema-box" open><summary>Схема базы: таблицы и стрелки-связи между ними</summary>${schemaMap(tablesOf(t.ref))}</details>
       <div class="pager">${taskIdx > 0 ? `<button class="btn ghost" data-go="${taskIdx - 1}" type="button">← Предыдущая</button>` : '<span></span>'}${taskIdx < TASKS.length - 1 ? `<button class="btn" data-go="${taskIdx + 1}" type="button">Следующая →</button>` : '<a class="btn pen" href="#test">К тесту →</a>'}</div>
     </article>
   </div>`;
@@ -1036,7 +1099,7 @@ views.exam = () => {
           <span class="kbd">${exam.allowRun ? 'Ctrl + Enter: запустить' : 'Запуск выключен'}</span>
         </div>
         <div id="exam-out" class="out"></div>
-        <details class="schema-box"><summary>Схема базы</summary>${schemaHTML()}</details>
+        <details class="schema-box"><summary>Схема базы</summary>${schemaMap([], { note: false })}</details>
       </section>
       <aside class="exam-notes">
         <label class="eyebrow" for="notes">Листок для заметок</label>

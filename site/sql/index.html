@@ -231,6 +231,29 @@ td.use { background: var(--pen-soft); }
 .rule { display: inline-block; font-size: .82rem; color: var(--red); border: 1px solid var(--red); border-radius: 4px; padding: 0 6px; margin-left: 4px; }
 .reveal { background: var(--amber-soft); padding: 10px 12px; border-radius: var(--r); font-size: .9rem; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .schema-box { margin-top: 24px; }
+.schema.schema-map { display: block; }
+.map-scroll { overflow-x: auto; background: var(--sheet); border: 1px solid var(--line); border-radius: var(--r); padding: 6px; }
+.map-scroll svg { display: block; width: 100%; min-width: 640px; height: auto; font-family: var(--f-mono); }
+.schema-map .tb { cursor: pointer; }
+.schema-map .tb rect { fill: var(--paper); stroke: var(--line); stroke-width: 1.2; }
+.schema-map .tb rect.hd { fill: var(--pen-soft); stroke: none; }
+.schema-map .tb .tn { font-size: 13px; font-weight: 600; fill: var(--pen); }
+.schema-map .tb .cl { font-size: 12px; fill: var(--ink); }
+.schema-map .tb .pk { font-size: 12px; fill: var(--ink); font-weight: 600; }
+.schema-map .tb .fk { font-size: 12px; fill: var(--amber); font-weight: 600; }
+.schema-map .tb.hot rect { stroke: var(--pen); stroke-width: 2; }
+.schema-map .tb.hot rect.hd { fill: var(--pen); }
+.schema-map .tb.hot .tn { fill: var(--sheet); }
+.schema-map .tb.dim { opacity: .38; }
+.schema-map .tb:hover rect { stroke: var(--pen); }
+.schema-map .tb:focus-visible { outline: none; } .schema-map .tb:focus-visible rect { stroke: var(--pen); stroke-width: 2.5; }
+.schema-map .lk { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: .55; }
+.schema-map .lk.hot { stroke: var(--amber); stroke-width: 2.6; opacity: 1; }
+.schema-map .ahd { fill: var(--muted); } .schema-map .ahh { fill: var(--amber); }
+.map-legend { font-size: .82rem; color: var(--muted); margin: 8px 0 0; }
+.map-legend span { font-family: var(--f-mono); color: var(--ink); } .map-legend span.fk { color: var(--amber); font-weight: 600; }
+.map-note { margin-top: 10px; padding: 10px 14px; border-radius: var(--r); background: var(--amber-soft); font-size: .92rem; }
+.map-note p { margin: 0; } .map-note p + p { margin-top: 6px; }
 .schema-box summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 .schema { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 10px; }
 .side .schema { grid-template-columns: minmax(0, 1fr); }
