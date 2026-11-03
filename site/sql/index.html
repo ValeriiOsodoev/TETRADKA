@@ -199,6 +199,28 @@ table.parts td:first-child { white-space: nowrap; }
 .demo-arrow { font: 600 1.4rem var(--f-mono); color: var(--pen); align-self: center; }
 @media (max-width: 640px) { .demo-arrow { transform: rotate(90deg); } .demo-body { flex-direction: column; } }
 .demo-note { font-size: .9rem; color: var(--muted); margin: 10px 0 0; }
+.setop { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.setop-op { font-size: .85rem; letter-spacing: .04em; }
+@media (max-width: 640px) { .setop { flex-direction: column; } .setop .demo-arrow { transform: none; } }
+.viz .setop { padding: 4px 0; }
+.topic-pick { display: flex; flex-direction: column; gap: 2px; margin: 0 0 14px; }
+.topic-pick .eyebrow { margin: 0; }
+.topic-pick select { font: inherit; font-size: .92rem; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--sheet); color: var(--ink); max-width: 100%; }
+article.narrow .topic-pick { flex-direction: row; align-items: center; gap: 10px; }
+.topics { margin-bottom: 32px; }
+.topic-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.topic-list button, .topic-list .soon { all: unset; box-sizing: border-box; display: flex; gap: 14px; align-items: flex-start; width: 100%; padding: 14px 16px; background: var(--sheet); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }
+.topic-list .soon { cursor: default; background: transparent; border-style: dashed; color: var(--muted); }
+.topic-list button:hover { border-color: var(--pen); }
+.topic-list button:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+.topic-list button.on { border-color: var(--pen); box-shadow: inset 3px 0 0 var(--pen); }
+.topic-list .n { font: 600 1.3rem/1.2 var(--f-mono); color: var(--pen); min-width: 1.4em; }
+.topic-list .tt { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.topic-list .tt small { color: var(--muted); font-size: .88rem; }
+.topic-list .tt small.tp { font-family: var(--f-mono); font-size: .78rem; }
+.topic-list .cur { font-size: .75rem; color: var(--pen); font-weight: 600; white-space: nowrap; }
+.ex-topics { border: 0; padding: 0; margin: 0; flex-basis: 100%; display: flex; flex-direction: column; gap: 2px; }
+.ex-topics legend { font-size: .9rem; color: var(--muted); padding: 0; margin-bottom: 4px; }
 td.use { background: var(--pen-soft); }
 .demo-table { margin: 12px 0 16px; }
 .recall { margin-top: 32px; padding: 18px 20px; border: 1px dashed var(--pen); border-radius: var(--r); background: var(--sheet); }

@@ -1,7 +1,7 @@
 // PostgreSQL прямо в браузере. Загружается с jsDelivr (около 15 МБ, браузер кеширует).
 const PGLITE_URL = 'https://cdn.jsdelivr.net/npm/@electric-sql/pglite@0.5.14/dist/index.js';
 
-import { SEED_SQL, SCHEMA, TOPIC, LESSONS, TASKS, EXAM_TASKS, CARDS, TEST, METHOD } from './content.js';
+import { SEED_SQL, SCHEMA, TOPICS, METHOD } from './content.js';
 
 /* ================= helpers ================= */
 const $ = (s, r = document) => r.querySelector(s);
@@ -13,7 +13,7 @@ const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)')
 const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many; };
 
-const KW = /\b(SELECT|FROM|WHERE|AND|OR|NOT|IN|IS|NULL|AS|ORDER|BY|ASC|DESC|LIMIT|OFFSET|DISTINCT|BETWEEN|LIKE|ILIKE|CASE|WHEN|THEN|ELSE|END|EXISTS|JOIN|ON|GROUP|HAVING|UNION|ALL|NULLS|FIRST|LAST|ROUND|AVG|COUNT|SUM|MIN|MAX)\b/gi;
+const KW = /\b(SELECT|FROM|WHERE|AND|OR|NOT|IN|IS|NULL|AS|ORDER|BY|ASC|DESC|LIMIT|OFFSET|DISTINCT|BETWEEN|LIKE|ILIKE|CASE|WHEN|THEN|ELSE|END|EXISTS|JOIN|ON|GROUP|HAVING|UNION|ALL|NULLS|FIRST|LAST|ROUND|AVG|COUNT|SUM|MIN|MAX|CROSS|INNER|LEFT|RIGHT|FULL|OUTER|NATURAL|USING|INTERSECT|EXCEPT|WITH|COALESCE|ABS)\b/gi;
 function hl(sql) {
   // строки и комментарии отдельно, чтобы не подсвечивать ключевые слова внутри них
   let out = '', i = 0;
@@ -26,6 +26,20 @@ function hl(sql) {
   return out + esc(sql.slice(i)).replace(KW, (k) => `<b class="kw">${k}</b>`);
 }
 const stripSql = (sql) => sql.replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, ' ');
+
+/* ================= topics ================= */
+const ALL = { tasks: TOPICS.flatMap((t) => t.tasks), exam: TOPICS.flatMap((t) => t.exam), cards: TOPICS.flatMap((t) => t.cards) };
+const examTopic = new Map(TOPICS.flatMap((t) => t.exam.map((e) => [e.id, t.id])));
+let cur = TOPICS[0];
+try { cur = TOPICS.find((t) => t.id === localStorage.getItem('sql.topic')) || cur; } catch {}
+function setTopic(id) {
+  const t = TOPICS.find((x) => x.id === id);
+  if (!t || t === cur) return;
+  cur = t; lessonIdx = 0; taskIdx = 0; testRun = null;
+  try { localStorage.setItem('sql.topic', id); } catch {}
+}
+const topicPick = () => `<label class="topic-pick"><span class="eyebrow">Тема</span><select id="topic-sel">${TOPICS.map((t) => `<option value="${t.id}" ${t === cur ? 'selected' : ''}>${t.n}. ${esc(t.short)}</option>`).join('')}</select></label>`;
+function bindTopicPick(view) { const s = $('#topic-sel'); if (s) s.onchange = () => { setTopic(s.value); views[view](); window.scrollTo(0, 0); }; }
 
 /* ================= storage / auth ================= */
 const LS_KEY = 'tetradka.sql.v1';
@@ -200,11 +214,11 @@ function editor(initial = '', { rows = 7, paper = false, id } = {}) { // paper: 
 }
 
 /* ================= visualizer ================= */
-const TOP = ['select', 'from', 'where', 'group by', 'having', 'order by', 'limit', 'offset', 'union', 'intersect', 'except', 'join', 'window'];
-function parseSimple(sqlRaw) {
-  let sql = sqlRaw.replace(/--[^\n]*/g, ' ').trim().replace(/;\s*$/, '').trim();
-  if (sql.includes(';')) return { error: 'Визуализация работает для одного запроса.' };
-  // найти ключевые слова верхнего уровня (вне скобок и строк)
+const TOP = ['select', 'from', 'where', 'group by', 'having', 'order by', 'limit', 'offset', 'union all', 'union', 'intersect', 'except', 'window'];
+const SETOPS = ['union all', 'union', 'intersect', 'except'];
+const NOT_ALIAS = '(?!(?:on|join|left|right|full|inner|outer|cross|natural|using|where|order|limit|group)\\b)';
+function topMarks(sql) {
+  // ключевые слова верхнего уровня (вне скобок и строк)
   const low = sql.toLowerCase(); const marks = []; let depth = 0;
   for (let i = 0; i < sql.length; i++) {
     const c = sql[i];
@@ -218,41 +232,83 @@ function parseSimple(sqlRaw) {
       if (m) { marks.push({ kw, i, len: m[0].length }); i += m[0].length - 1; break; }
     }
   }
+  return marks;
+}
+function parseSimple(sqlRaw) {
+  const sql = sqlRaw.replace(/--[^\n]*/g, ' ').trim().replace(/;\s*$/, '').trim();
+  if (sql.includes(';')) return { error: 'Визуализация работает для одного запроса.' };
+  if (/^with\b/i.test(sql)) return { error: 'Запросы с WITH визуализация не показывает. Запусти запрос, чтобы увидеть ответ.' };
+  const marks = topMarks(sql);
   const has = (k) => marks.find((m) => m.kw === k);
   if (!has('select') || marks[0].kw !== 'select' || marks[0].i !== 0) return { error: 'Визуализация показывает запросы, которые начинаются с SELECT.' };
-  for (const k of ['group by', 'having', 'union', 'intersect', 'except', 'join', 'window']) if (has(k)) return { error: `Конструкцию ${k.toUpperCase()} визуализация пока не показывает. Она появится в следующих темах.` };
+  const ops = marks.filter((m) => SETOPS.includes(m.kw));
+  if (ops.length > 1) return { error: 'Визуализация показывает одну операцию UNION, INTERSECT или EXCEPT.' };
+  if (ops.length === 1) {
+    const op = ops[0];
+    const tail = marks.find((m) => m.i > op.i && (m.kw === 'order by' || m.kw === 'limit' || m.kw === 'offset'));
+    return { setop: op.kw, sql, left: sql.slice(0, op.i).trim(), right: sql.slice(op.i + op.len, tail ? tail.i : sql.length).trim() };
+  }
+  for (const k of ['group by', 'having', 'window']) if (has(k)) return { error: `Конструкцию ${k.toUpperCase()} визуализация пока не показывает. Она появится в следующих темах.` };
   if (marks.filter((m) => m.kw === 'select').length > 1) return { error: 'Визуализация показывает один SELECT.' };
   const part = (k) => { const idx = marks.findIndex((m) => m.kw === k); if (idx < 0) return null; const m = marks[idx]; const end = marks[idx + 1] ? marks[idx + 1].i : sql.length; return sql.slice(m.i + m.len, end).trim(); };
   let list = part('select'); const from = part('from');
   if (!from) return { error: 'В запросе нет FROM.' };
-  const fm = from.match(/^([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?([a-z_][a-z0-9_]*))?$/i);
-  if (!fm) return { error: 'Визуализация работает для одной таблицы во FROM.' };
+  if (/\bselect\b/i.test(from)) return { error: 'Подзапрос во FROM визуализация не показывает. Запусти запрос, чтобы увидеть ответ.' };
+  const refs = [];
+  const re = new RegExp(`(?:^|,|\\bjoin)\\s*([a-z_][a-z0-9_]*)(\\s*\\()?(?:\\s+(?:as\\s+)?${NOT_ALIAS}([a-z_][a-z0-9_]*))?`, 'gi');
+  let m;
+  while ((m = re.exec(from))) {
+    if (m[2]) return { error: 'Функции во FROM (например, generate_series) визуализация не показывает. Запусти запрос, чтобы увидеть ответ.' };
+    refs.push({ table: m[1], alias: m[3] || null });
+  }
+  if (!refs.length) return { error: 'Не получилось разобрать FROM.' };
   let distinct = false;
   if (/^distinct\s/i.test(list)) { distinct = true; list = list.replace(/^distinct\s+/i, ''); }
-  return { sql, list, table: fm[1], alias: fm[2] || null, where: part('where'), order: part('order by'), limit: part('limit'), offset: part('offset'), distinct };
+  return { sql, list, from, refs, table: refs[0].table, alias: refs[0].alias, multi: refs.length > 1, where: part('where'), order: part('order by'), limit: part('limit'), offset: part('offset'), distinct };
+}
+const refName = (r) => r.alias || r.table;
+// ключ строки: ctid каждой таблицы (у пустой половины LEFT/FULL JOIN ctid нет, будет «-»)
+const keyExpr = (p) => p.refs.map((r) => `coalesce(${refName(r)}.ctid::text, '-')`).join(` || '|' || `);
+const ordExpr = (p) => p.refs.map((r) => `${refName(r)}.ctid`).join(', ');
+async function baseRows(p) {
+  const from = `FROM ${p.from}`;
+  const res = await run(`SELECT ${p.refs.map((r) => refName(r) + '.*').join(', ')}, ${keyExpr(p)} AS __k ${from} ORDER BY ${ordExpr(p)}`);
+  const raw = res.fields.slice(0, -1);
+  let labels = raw;
+  if (p.multi) {
+    labels = [];
+    for (const r of p.refs) { const f = await run(`SELECT ${refName(r)}.* ${from} LIMIT 0`); labels.push(...f.fields.map((x) => `${refName(r)}.${x}`)); }
+  }
+  const k = res.fields.length - 1;
+  return { raw, labels, rows: res.rows.map((r) => ({ key: r[k], cells: r.slice(0, k) })) };
+}
+function joinText(p, n) {
+  const f = p.from.toLowerCase();
+  const kind = /\bfull\b/.test(f) ? 'FULL JOIN оставляет строки без пары с обеих сторон, пустые клетки это NULL'
+    : /\b(left|right)\b/.test(f) ? 'строки без пары тоже остаются, их пустые клетки это NULL'
+    : /\bcross\b|,/.test(f) ? 'каждая строка с каждой'
+    : 'остаются только пары, для которых верно условие ON';
+  return `Склеиваем таблицы ${p.refs.map((r) => r.table).join(', ')}: ${kind}. Получилось ${n} ${plural(n, 'строка', 'строки', 'строк')}.`;
 }
 
 async function buildSteps(p) {
-  const ref = p.alias || p.table;
-  const fromSql = `FROM ${p.table}${p.alias ? ' ' + p.alias : ''}`;
+  const fromSql = `FROM ${p.from}`;
   const whereSql = p.where ? ` WHERE ${p.where}` : '';
-  const base = await run(`SELECT *, ${ref}.ctid::text AS __k ${fromSql} ORDER BY ${ref}.ctid`);
-  const k = (res) => res.fields.length - 1;
-  const strip = (res) => ({ fields: res.fields.slice(0, -1), rows: res.rows.map((r) => ({ key: r[k(res)], cells: r.slice(0, -1) })) });
-  const B = strip(base);
+  const B = await baseRows(p);
   const steps = [];
-  steps.push({ clause: 'from', title: `FROM ${p.table}`, text: `Берём все строки таблицы ${p.table}: ${B.rows.length}.`, fields: B.fields, rows: B.rows.map((r) => ({ ...r })) });
-  let keep = B.rows.map((r) => r.key);
+  const fromTitle = `FROM ${p.from.replace(/\s+/g, ' ')}`;
+  steps.push({ clause: 'from', title: fromTitle, text: p.multi ? joinText(p, B.rows.length) : `Берём все строки таблицы ${p.table}: ${B.rows.length}.`, fields: B.labels, rows: B.rows.map((r) => ({ ...r })) });
   if (p.where) {
-    const pass = await run(`SELECT ${ref}.ctid::text ${fromSql}${whereSql}`);
+    const pass = await run(`SELECT ${keyExpr(p)} ${fromSql}${whereSql}`);
     const ok = new Set(pass.rows.map((r) => r[0]));
-    keep = B.rows.filter((r) => ok.has(r.key)).map((r) => r.key);
-    steps.push({ clause: 'where', title: `WHERE ${p.where}`, text: `Проверяем условие для каждой строки. Подходят ${ok.size} из ${B.rows.length}, остальные отбрасываем.`, fields: B.fields, rows: B.rows.map((r) => ({ ...r, out: !ok.has(r.key) })) });
+    steps.push({ clause: 'where', title: `WHERE ${p.where}`, text: `Проверяем условие для каждой строки. Подходят ${pass.rows.length} из ${B.rows.length}, остальные отбрасываем.`, fields: B.labels, rows: B.rows.map((r) => ({ ...r, out: !ok.has(r.key) })) });
   }
-  const proj = strip(await run(`SELECT ${p.list}, ${ref}.ctid::text AS __k ${fromSql}${whereSql} ORDER BY ${ref}.ctid`));
-  const computed = proj.fields.map((f) => !B.fields.includes(f));
-  const dropped = B.fields.filter((f) => !proj.fields.includes(f));
-  steps.push({ clause: 'select', title: `SELECT ${p.list}`, text: `Оставляем ${proj.fields.length} ${plural(proj.fields.length, 'колонку', 'колонки', 'колонок')}${dropped.length && dropped.length < B.fields.length ? `, отбрасываем ${dropped.join(', ')}` : ''}${computed.some(Boolean) ? '. Подсвеченные колонки вычислены выражением или переименованы через AS' : ''}.`, fields: proj.fields, computed, rows: proj.rows });
+  const pr = await run(`SELECT ${p.list}, ${keyExpr(p)} AS __k ${fromSql}${whereSql} ORDER BY ${ordExpr(p)}`);
+  const pk = pr.fields.length - 1;
+  const proj = { fields: pr.fields.slice(0, -1), rows: pr.rows.map((r) => ({ key: r[pk], cells: r.slice(0, pk) })) };
+  const computed = proj.fields.map((f) => !B.raw.includes(f));
+  const dropped = p.multi ? [] : B.raw.filter((f) => !proj.fields.includes(f));
+  steps.push({ clause: 'select', title: `SELECT ${p.list}`, text: `Оставляем ${proj.fields.length} ${plural(proj.fields.length, 'колонку', 'колонки', 'колонок')}${dropped.length && dropped.length < B.raw.length ? `, отбрасываем ${dropped.join(', ')}` : ''}${computed.some(Boolean) ? '. Подсвеченные колонки вычислены выражением или переименованы через AS' : ''}.`, fields: proj.fields, computed, rows: proj.rows });
   let rows = proj.rows;
   const vk = (r) => rowKey(r.cells);
   if (p.distinct) {
@@ -263,7 +319,7 @@ async function buildSteps(p) {
     rows = marked.filter((r) => !r.out);
   }
   if (p.order) {
-    const ord = await run(`SELECT ${p.list}, ${ref}.ctid::text AS __k ${fromSql}${whereSql} ORDER BY ${p.order}, ${ref}.ctid`);
+    const ord = await run(`SELECT ${p.list}, ${keyExpr(p)} AS __k ${fromSql}${whereSql} ORDER BY ${p.order}, ${ordExpr(p)}`);
     const pos = new Map();
     if (p.distinct) { ord.rows.forEach((r, i) => { const key = rowKey(r.slice(0, -1)); if (!pos.has(key)) pos.set(key, i); }); rows = rows.slice().sort((a, b) => pos.get(vk(a)) - pos.get(vk(b))); }
     else { ord.rows.forEach((r, i) => pos.set(r[r.length - 1], i)); rows = rows.slice().sort((a, b) => pos.get(a.key) - pos.get(b.key)); }
@@ -286,16 +342,42 @@ async function buildSteps(p) {
   return steps;
 }
 
+/* UNION / INTERSECT / EXCEPT: два ответа рядом и общий результат */
+const SETOP_TEXT = {
+  union: 'UNION ставит ответы друг под другом и убирает повторы. Зачёркнуты строки, которые уже встречались.',
+  'union all': 'UNION ALL ставит ответы друг под другом и ничего не убирает.',
+  intersect: 'INTERSECT оставляет только строки, которые есть в обоих ответах. Остальные зачёркнуты.',
+  except: 'EXCEPT берёт первый ответ и вычёркивает из него строки, которые есть во втором.',
+};
+const miniTable = (res, out) => `<div class="tbl-wrap"><table class="res viz-t"><thead><tr>${res.fields.map((f) => `<th>${esc(f)}</th>`).join('')}</tr></thead><tbody>${res.rows.map((r, i) => `<tr class="${out[i] ? 'out' : ''}">${r.map((v) => { const t = fmt(v); return t === null ? '<td class="null">NULL</td>' : `<td>${esc(t)}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div><p class="rows-count">${res.rows.length} ${plural(res.rows.length, 'строка', 'строки', 'строк')}</p>`;
+async function setopHTML(p) {
+  const a = await run(p.left), b = await run(p.right), all = await run(p.sql);
+  const ka = a.rows.map(rowKey), kb = b.rows.map(rowKey), inA = new Set(ka), inB = new Set(kb);
+  const seen = new Set();
+  const once = (k) => { const d = seen.has(k); seen.add(k); return d; };
+  let outA, outB;
+  if (p.setop === 'union all') { outA = ka.map(() => false); outB = kb.map(() => false); }
+  else if (p.setop === 'union') { outA = ka.map(once); outB = kb.map(once); }
+  else if (p.setop === 'intersect') { outA = ka.map((k) => !inB.has(k) || once(k)); outB = kb.map((k) => !inA.has(k)); }
+  else { outA = ka.map((k) => inB.has(k) || once(k)); outB = kb.map(() => false); }
+  const op = p.setop.toUpperCase();
+  return `<div class="setop"><div class="demo-col"><p class="eyebrow">Первый запрос</p>${miniTable(a, outA)}</div><div class="demo-arrow setop-op" aria-hidden="true">${op}</div><div class="demo-col"><p class="eyebrow">Второй запрос</p>${miniTable(b, outB)}</div><div class="demo-arrow" aria-hidden="true">=</div><div class="demo-col"><p class="eyebrow">Ответ</p>${miniTable(all, all.rows.map(() => false))}</div></div><p class="demo-note">${SETOP_TEXT[p.setop]}</p>`;
+}
+
 const CLAUSE_ORDER = [['from', 'FROM'], ['where', 'WHERE'], ['select', 'SELECT'], ['distinct', 'DISTINCT'], ['order', 'ORDER BY'], ['limit', 'LIMIT']];
 async function visualize(container, sql) {
   container.innerHTML = '';
   const p = parseSimple(sql);
   if (p.error) { container.append(h(`<div class="viz-note">${esc(p.error)}</div>`)); return; }
+  if (p.setop) {
+    try { container.append(h(`<div class="viz">${await setopHTML(p)}</div>`)); } catch (e) { container.append(h(`<div class="viz-note bad">Запрос с ошибкой, визуализировать нечего: ${esc(e.message)}</div>`)); }
+    return;
+  }
   let steps;
   try { steps = await buildSteps(p); } catch (e) { container.append(h(`<div class="viz-note bad">Запрос с ошибкой, визуализировать нечего: ${esc(e.message)}</div>`)); return; }
   const present = new Set(steps.map((s) => s.clause));
   const box = h(`<div class="viz">
-    <ol class="viz-pipe">${CLAUSE_ORDER.filter(([c]) => present.has(c)).map(([c, label], i) => `<li data-c="${c}"><span class="n">${i + 1}</span>${label}</li>`).join('')}<li data-c="result"><span class="n">✓</span>Ответ</li></ol>
+    <ol class="viz-pipe">${CLAUSE_ORDER.filter(([c]) => present.has(c)).map(([c, label], i) => `<li data-c="${c}"><span class="n">${i + 1}</span>${c === 'from' && p.multi ? 'FROM + JOIN' : label}</li>`).join('')}<li data-c="result"><span class="n">✓</span>Ответ</li></ol>
     <div class="viz-cap"><b class="viz-title"></b><p class="viz-text"></p></div>
     <div class="viz-stage tbl-wrap"></div>
     <div class="viz-ctrl"><button class="btn ghost" data-a="prev" type="button">← Назад</button><button class="btn" data-a="play" type="button">Проиграть</button><button class="btn ghost" data-a="next" type="button">Дальше →</button><span class="viz-pos"></span></div>
@@ -349,20 +431,27 @@ async function renderDemo(el) {
   try { result = await run(sql); } catch (e) { body.innerHTML = `<div class="err"><pre>${esc(e.message)}</pre></div>`; return; }
   const after = `<div class="demo-col"><p class="eyebrow">Стало: ответ</p>${tableHTML(result, { max: 30 })}</div>`;
   const p = parseSimple(sql);
+  if (p.setop) { try { body.innerHTML = await setopHTML(p); } catch { body.innerHTML = after; } return; }
   if (p.error) { body.innerHTML = after; return; }
   try {
-    const ref = p.alias || p.table;
-    const from = `FROM ${p.table}${p.alias ? ' ' + p.alias : ''}`;
-    const base = await run(`SELECT *, ${ref}.ctid::text AS __k ${from} ORDER BY ${ref}.ctid`);
-    const k = base.fields.length - 1;
+    const from = `FROM ${p.from}`;
+    const B = await baseRows(p);
     let ok = null;
-    if (p.where) ok = new Set((await run(`SELECT ${ref}.ctid::text ${from} WHERE ${p.where}`)).rows.map((r) => r[0]));
+    if (p.where) ok = new Set((await run(`SELECT ${keyExpr(p)} ${from} WHERE ${p.where}`)).rows.map((r) => r[0]));
     const listLow = ' ' + p.list.toLowerCase().replace(/'(?:[^']|'')*'/g, '') + ' ';
-    const used = base.fields.slice(0, k).map((f) => p.list.trim() === '*' || new RegExp('[^a-z0-9_]' + f + '[^a-z0-9_]').test(listLow));
-    const head = base.fields.slice(0, k).map((f, j) => `<th class="${used[j] ? 'calc' : ''}">${esc(f)}</th>`).join('');
-    const rows = base.rows.map((r) => `<tr class="${ok && !ok.has(r[k]) ? 'out' : ''}">${r.slice(0, k).map((v, j) => `<td class="${used[j] ? 'use' : ''}">${esc(fmt(v) ?? 'NULL')}</td>`).join('')}</tr>`).join('');
-    const kept = ok ? ok.size : base.rows.length;
-    body.innerHTML = `<div class="demo-col"><p class="eyebrow">Было: таблица ${esc(p.table)}</p><div class="tbl-wrap"><table class="res viz-t">${`<thead><tr>${head}</tr></thead>`}<tbody>${rows}</tbody></table></div><p class="rows-count">${base.rows.length} ${plural(base.rows.length, 'строка', 'строки', 'строк')}${ok ? `, условию подходят ${kept}` : ''}</p></div><div class="demo-arrow" aria-hidden="true">→</div>${after}`;
+    const star = p.list.trim() === '*';
+    const used = B.labels.map((lab, j) => {
+      if (star) return true;
+      const col = B.raw[j];
+      const bare = new RegExp('[^a-z0-9_.]' + col + '[^a-z0-9_]').test(listLow);
+      if (!p.multi) return bare;
+      return listLow.includes(' ' + lab.toLowerCase()) || new RegExp('[^a-z0-9_]' + lab.replace('.', '\\.') + '[^a-z0-9_]').test(listLow) || (bare && B.raw.filter((x) => x === col).length === 1);
+    });
+    const head = B.labels.map((f, j) => `<th class="${used[j] ? 'calc' : ''}">${esc(f)}</th>`).join('');
+    const rows = B.rows.map((r) => `<tr class="${ok && !ok.has(r.key) ? 'out' : ''}">${r.cells.map((v, j) => `<td class="${used[j] ? 'use' : ''}${fmt(v) === null ? ' null' : ''}">${esc(fmt(v) ?? 'NULL')}</td>`).join('')}</tr>`).join('');
+    const kept = ok ? ok.size : B.rows.length;
+    const title = p.multi ? `Было: склеенные таблицы ${p.refs.map((r) => r.table).join(' + ')}` : `Было: таблица ${p.table}`;
+    body.innerHTML = `<div class="demo-col"><p class="eyebrow">${esc(title)}</p><div class="tbl-wrap"><table class="res viz-t"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div><p class="rows-count">${B.rows.length} ${plural(B.rows.length, 'строка', 'строки', 'строк')}${ok ? `, условию подходят ${kept}` : ''}</p></div><div class="demo-arrow" aria-hidden="true">→</div>${after}`;
   } catch { body.innerHTML = after; }
 }
 
@@ -408,11 +497,22 @@ function hintForError(msg, sql) {
   if (/syntax error at or near "FROM"/i.test(msg)) tips.push('Возможно, лишняя запятая перед FROM.');
   if (/syntax error at end of input/i.test(msg)) tips.push('Запрос оборвался: не хватает части выражения, скобки или END у CASE.');
   if (/relation "([^"]+)" does not exist/.test(msg)) tips.push('Такой таблицы нет. Таблицы: ' + SCHEMA.map((t) => t.name).join(', ') + '.');
+  if (/column reference "([^"]+)" is ambiguous/.test(msg)) { const c = msg.match(/column reference "([^"]+)" is ambiguous/)[1]; tips.push(`Колонка ${c} есть в нескольких таблицах. Напиши её с прозвищем таблицы, например p.${c}.`); }
+  if (/missing FROM-clause entry for table "([^"]+)"/.test(msg)) tips.push('Такого прозвища таблицы нет во FROM. Проверь, что после имени таблицы написано это прозвище, или что не опечатался.');
+  if (/invalid reference to FROM-clause entry for table "([^"]+)"/.test(msg)) tips.push('Если таблице дали прозвище, дальше пиши только прозвище: p.name, а не person.name.');
+  if (/each (UNION|INTERSECT|EXCEPT) query must have the same number of columns/i.test(msg)) tips.push('В обоих запросах должно быть одинаковое число колонок.');
+  if (/(UNION|INTERSECT|EXCEPT|COALESCE|CASE) types .* cannot be matched/i.test(msg)) tips.push('Значения разного типа нельзя поставить в одну колонку: текст с текстом, число с числом, дата с датой.');
+  if (/syntax error at or near "ON"/i.test(msg)) tips.push('Перед ON должен быть JOIN с именем таблицы. У CROSS JOIN условия ON нет.');
   if (/more than one row returned by a subquery/.test(msg)) tips.push('Скалярный подзапрос вернул несколько строк. Используй IN или сузь подзапрос.');
   return tips.length ? `<p class="tip">${tips.map(esc).join(' ')}</p>` : '';
 }
 
-const tablesOf = (sql) => [...new Set([...stripSql(sql).matchAll(/\b(?:from|join)\s+([a-z_][a-z0-9_]*)/gi)].map((m) => m[1].toLowerCase()))];
+const tablesOf = (sql) => {
+  const clean = stripSql(sql);
+  const ctes = new Set([...clean.matchAll(/(?:\bwith|,)\s*([a-z_][a-z0-9_]*)\s+as\s*\(/gi)].map((m) => m[1].toLowerCase()));
+  const names = [...clean.matchAll(/\b(?:from|join)\s+([a-z_][a-z0-9_]*)(?!\s*\()/gi)].map((m) => m[1].toLowerCase());
+  return [...new Set(names.filter((n) => !ctes.has(n) && SCHEMA.some((t) => t.name === n)))];
+};
 const tablesHTML = (sql) => { const t = tablesOf(sql); return `<p class="tables">${t.length > 1 ? 'Таблицы' : 'Таблица'}: ${t.map((x) => `<code>${x}</code>`).join(', ')}</p>`; };
 
 function schemaHTML() {
@@ -423,10 +523,10 @@ function schemaHTML() {
 const BOX_INTERVAL = [0, 10 * MIN, 1 * DAY, 2 * DAY, 4 * DAY, 7 * DAY];
 function allCards() {
   const extra = Object.keys(store.state.cards).filter((id) => id.startsWith('x:')).map((id) => {
-    const t = EXAM_TASKS.find((e) => e.id === id.slice(2)) || TASKS.find((e) => e.id === id.slice(2));
+    const t = ALL.exam.find((e) => e.id === id.slice(2)) || ALL.tasks.find((e) => e.id === id.slice(2));
     return t && { id, type: 'write', q: t.text, ref: t.ref, ordered: t.ordered, forbid: t.forbid, checkNames: t.checkNames, fromExam: true };
   }).filter(Boolean);
-  return CARDS.concat(extra);
+  return ALL.cards.concat(extra);
 }
 const cardState = (id) => store.state.cards[id] || { box: 0, due: 0, seen: 0, lapses: 0 };
 function dueCards() { const t = now(); return allCards().filter((c) => cardState(c.id).due <= t); }
@@ -444,14 +544,15 @@ const fmtWait = (ms) => ms < MIN ? 'меньше минуты' : ms < 60 * MIN ?
 const views = {};
 const main = () => $('#main');
 
-function progressNumbers() {
+const testsOf = (t) => store.state.tests.filter((x) => (x.topic || 'select') === t.id);
+function progressNumbers(T = cur) {
   const st = store.state;
-  const lessons = LESSONS.filter((l) => st.lessons[l.id]?.read).length;
-  const tasks = TASKS.filter((t) => st.tasks[t.id]?.solved).length;
-  const paper = TASKS.filter((t) => st.tasks[t.id]?.paper).length;
-  const bestTest = st.tests.reduce((m, t) => Math.max(m, t.score), 0);
+  const lessons = T.lessons.filter((l) => st.lessons[l.id]?.read).length;
+  const tasks = T.tasks.filter((t) => st.tasks[t.id]?.solved).length;
+  const paper = T.tasks.filter((t) => st.tasks[t.id]?.paper).length;
+  const bestTest = testsOf(T).reduce((m, t) => Math.max(m, t.score), 0);
   const bestExam = st.exams.filter((t) => t.total === 100).reduce((m, t) => Math.max(m, t.score), 0);
-  const learned = CARDS.filter((c) => cardState(c.id).box >= 3).length;
+  const learned = T.cards.filter((c) => cardState(c.id).box >= 3).length;
   return { lessons, tasks, paper, bestTest, bestExam, learned, due: dueCards().length };
 }
 
@@ -460,21 +561,27 @@ views.home = () => {
   const bar = (v, max) => `<span class="meter"><i style="width:${Math.round((v / max) * 100)}%"></i></span>`;
   main().innerHTML = `
   <section class="hero">
-    <p class="eyebrow">${TOPIC.day} · тема 1 из 10</p>
-    <h1>${TOPIC.title}</h1>
+    <p class="eyebrow">Тема ${cur.n} · ${cur.day}</p>
+    <h1>${cur.title}</h1>
     <p class="lead">На экзамене в Школе 21 есть компьютер, но нет интернета, документации и подсказок. Задания открываются по уровням, а сдачу проверяет автопроверка. Поэтому здесь всё построено вокруг одного навыка: написать верный запрос по памяти и сдать его с первой попытки.</p>
+  </section>
+  <section class="topics">
+    <h2>Темы</h2>
+    <ol class="topic-list">${TOPICS.map((t) => { const q = progressNumbers(t); return `<li><button type="button" data-topic="${t.id}" class="${t === cur ? 'on' : ''}" aria-pressed="${t === cur}"><span class="n">${t.n}</span><span class="tt"><b>${esc(t.title)}</b><small>${esc(t.lead)}</small><small class="tp">${esc(t.day)} · теория ${q.lessons}/${t.lessons.length} · задачи ${q.tasks}/${t.tasks.length}</small></span>${t === cur ? '<span class="cur">выбрана</span>' : ''}</button></li>`; }).join('')}
+      <li class="soon"><span class="n">…</span><span class="tt"><b>Дальше</b><small>GROUP BY и агрегаты, изменение данных, создание таблиц и ограничения, VIEW, индексы, транзакции, функции.</small></span></li>
+    </ol>
   </section>
   <section class="today">
     <a class="today-card due" href="#review"><b>${p.due}</b><span>${plural(p.due, 'карточка', 'карточки', 'карточек')} к повторению сейчас</span></a>
-    <a class="today-card" href="#practice"><b>${p.tasks}<small>/${TASKS.length}</small></b><span>задач решено, в режиме экзамена ${p.paper}</span></a>
+    <a class="today-card" href="#practice"><b>${p.tasks}<small>/${cur.tasks.length}</small></b><span>задач решено, в режиме экзамена ${p.paper}</span></a>
     <a class="today-card" href="#exam"><b>${store.state.exams.length ? p.bestExam : '—'}</b><span>лучший пробный экзамен, баллов из 100</span></a>
   </section>
   <section class="path">
-    <h2>Путь по теме</h2>
+    <h2>Путь по теме «${esc(cur.short)}»</h2>
     <ol class="steps">
-      <li><a href="#learn"><b>Теория</b><span>${p.lessons} из ${LESSONS.length} разделов</span>${bar(p.lessons, LESSONS.length)}</a></li>
-      <li><a href="#practice"><b>Тренажёр</b><span>${p.tasks} из ${TASKS.length} задач</span>${bar(p.tasks, TASKS.length)}</a></li>
-      <li><a href="#test"><b>Тест по теме</b><span>${store.state.tests.length ? `лучший результат ${p.bestTest} из ${TEST.length}` : 'ещё не пройден'}</span>${bar(p.bestTest, TEST.length)}</a></li>
+      <li><a href="#learn"><b>Теория</b><span>${p.lessons} из ${cur.lessons.length} разделов</span>${bar(p.lessons, cur.lessons.length)}</a></li>
+      <li><a href="#practice"><b>Тренажёр</b><span>${p.tasks} из ${cur.tasks.length} задач</span>${bar(p.tasks, cur.tasks.length)}</a></li>
+      <li><a href="#test"><b>Тест по теме</b><span>${testsOf(cur).length ? `лучший результат ${p.bestTest} из ${cur.test.length}` : 'ещё не пройден'}</span>${bar(p.bestTest, cur.test.length)}</a></li>
       <li><a href="#exam"><b>Пробный экзамен</b><span>${store.state.exams.length ? `попыток: ${store.state.exams.length}` : '4 уровня, задания по одному'}</span>${bar(p.bestExam, 100)}</a></li>
     </ol>
   </section>
@@ -497,6 +604,7 @@ views.home = () => {
     <button class="btn ghost small" type="button" id="reset">Сбросить прогресс</button>
     <span id="reset-confirm" hidden>Точно удалить весь прогресс? <button class="btn small bad" type="button" id="reset-yes">Да, удалить</button> <button class="btn ghost small" type="button" id="reset-no">Отмена</button></span>
   </section>`;
+  $('.topic-list').addEventListener('click', (e) => { const b = e.target.closest('[data-topic]'); if (b) { setTopic(b.dataset.topic); views.home(); } });
   $('#reset').onclick = () => { $('#reset-confirm').hidden = false; };
   $('#reset-no').onclick = () => { $('#reset-confirm').hidden = true; };
   $('#reset-yes').onclick = () => { store.reset(); views.home(); };
@@ -505,10 +613,12 @@ views.home = () => {
 let lessonIdx = 0;
 views.learn = () => {
   const st = store.state;
+  const LESSONS = cur.lessons;
+  if (lessonIdx >= LESSONS.length) lessonIdx = 0;
   const l = LESSONS[lessonIdx];
   main().innerHTML = `
   <div class="split">
-    <nav class="side" aria-label="Разделы теории"><p class="eyebrow">Теория</p><ol>${LESSONS.map((x, i) => `<li><button type="button" data-i="${i}" class="${i === lessonIdx ? 'on' : ''}"><span class="mark ${st.lessons[x.id]?.recalled ? 'ok' : st.lessons[x.id]?.read ? 'half' : ''}"></span>${esc(x.title)}</button></li>`).join('')}</ol></nav>
+    <nav class="side" aria-label="Разделы теории">${topicPick()}<p class="eyebrow">Теория</p><ol>${LESSONS.map((x, i) => `<li><button type="button" data-i="${i}" class="${i === lessonIdx ? 'on' : ''}"><span class="mark ${st.lessons[x.id]?.recalled ? 'ok' : st.lessons[x.id]?.read ? 'half' : ''}"></span>${esc(x.title)}</button></li>`).join('')}</ol></nav>
     <article class="lesson">
       <p class="eyebrow">Раздел ${lessonIdx + 1} из ${LESSONS.length}</p>
       <h1>${esc(l.title)}</h1>
@@ -531,6 +641,7 @@ views.learn = () => {
   document.querySelectorAll('.prose .demo').forEach(renderDemo);
   document.querySelectorAll('.prose .demo-table').forEach(async (el) => { el.innerHTML = tableHTML(await run(`SELECT * FROM ${el.dataset.table} ORDER BY id`)); });
   st.lessons[l.id] = { ...(st.lessons[l.id] || {}), read: true }; store.save();
+  bindTopicPick('learn');
   $('.side').addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) { lessonIdx = +b.dataset.i; views.learn(); window.scrollTo(0, 0); } });
   $('.pager').addEventListener('click', (e) => { const b = e.target.closest('button[data-go]'); if (b) { lessonIdx = +b.dataset.go; views.learn(); window.scrollTo(0, 0); } });
   $('#show-a').onclick = () => { $('#recall-a').hidden = false; $('#show-a').hidden = true; };
@@ -542,11 +653,13 @@ views.learn = () => {
 let taskIdx = 0, paperMode = false;
 views.practice = () => {
   const st = store.state;
+  const TASKS = cur.tasks;
+  if (taskIdx >= TASKS.length) taskIdx = 0;
   const t = TASKS[taskIdx];
   const ts = st.tasks[t.id] || {};
   main().innerHTML = `
   <div class="split">
-    <nav class="side" aria-label="Задачи"><p class="eyebrow">Тренажёр · ${TASKS.filter((x) => st.tasks[x.id]?.solved).length}/${TASKS.length}</p>
+    <nav class="side" aria-label="Задачи">${topicPick()}<p class="eyebrow">Тренажёр · ${TASKS.filter((x) => st.tasks[x.id]?.solved).length}/${TASKS.length}</p>
       <label class="switch" title="Без подсказок, эталона и визуализации. Запускать запросы можно, но каждая неверная сдача засчитывается как ошибка."><input type="checkbox" id="paper" ${paperMode ? 'checked' : ''}> Режим экзамена</label>
       <ol>${TASKS.map((x, i) => { const s = st.tasks[x.id] || {}; return `<li><button type="button" data-i="${i}" class="${i === taskIdx ? 'on' : ''}"><span class="mark ${s.paper ? 'ok' : s.solved ? 'half' : s.tries ? 'bad' : ''}"></span><span class="lvl">${'•'.repeat(x.level)}</span>${esc(x.title)}</button></li>`; }).join('')}</ol>
       <p class="legend"><span class="mark half"></span>решено <span class="mark ok"></span>решено в режиме экзамена <span class="mark bad"></span>есть ошибки</p>
@@ -588,6 +701,7 @@ views.practice = () => {
       $('#reveal-yes').onclick = () => { $('#hints').innerHTML = `<pre class="sql">${hl(t.ref)}</pre>`; };
     }
   });
+  bindTopicPick('practice');
   $('#paper').onchange = (e) => { paperMode = e.target.checked; views.practice(); };
   $('.side').addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) { taskIdx = +b.dataset.i; views.practice(); } });
   $('.pager').addEventListener('click', (e) => { const b = e.target.closest('button[data-go]'); if (b) { taskIdx = +b.dataset.go; views.practice(); window.scrollTo(0, 0); } });
@@ -649,22 +763,23 @@ views.review = () => {
 let testRun = null;
 views.test = () => {
   if (!testRun) {
-    const hist = store.state.tests.slice(-5).reverse();
-    main().innerHTML = `<article class="narrow"><p class="eyebrow">Тест по теме</p><h1>${TOPIC.title}</h1>
-      <p class="lead">${TEST.length} вопросов: выбор ответа, «сколько строк вернёт запрос» и запросы, которые нужно написать без запуска. Ответ на каждый вопрос даётся один раз.</p>
+    const hist = testsOf(cur).slice(-5).reverse();
+    main().innerHTML = `<article class="narrow">${topicPick()}<p class="eyebrow">Тест по теме ${cur.n}</p><h1>${cur.title}</h1>
+      <p class="lead">${cur.test.length} вопросов: выбор ответа, «сколько строк вернёт запрос» и запросы, которые нужно написать без запуска. Ответ на каждый вопрос даётся один раз.</p>
       <div class="bar"><button class="btn pen" id="start" type="button">Начать тест</button></div>
       ${hist.length ? `<h3>Прошлые попытки</h3><ul class="hist">${hist.map((t) => `<li><b>${t.score}/${t.total}</b> <span class="muted">${new Date(t.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</span></li>`).join('')}</ul>` : ''}
     </article>`;
-    $('#start').onclick = () => { testRun = { i: 0, answers: [], items: shuffle(TEST) }; views.test(); };
+    bindTopicPick('test');
+    $('#start').onclick = () => { testRun = { i: 0, answers: [], items: shuffle(cur.test), topic: cur.id }; views.test(); };
     return;
   }
   const { i, items } = testRun;
   if (i >= items.length) {
     const score = testRun.answers.filter((a) => a.ok).length;
-    store.state.tests.push({ at: now(), score, total: items.length }); store.save();
+    store.state.tests.push({ at: now(), score, total: items.length, topic: testRun.topic }); store.save();
     const wrong = testRun.answers.filter((a) => !a.ok);
     main().innerHTML = `<article class="narrow"><p class="eyebrow">Тест завершён</p><h1>${score} из ${items.length}</h1>
-      <p class="lead">${score === items.length ? 'Все ответы верные. Переходи к пробному экзамену.' : score >= 8 ? 'Хорошо. Разбери ошибки ниже и пройди тест ещё раз завтра.' : 'Вернись к теории по вопросам с ошибками, потом пройди тест ещё раз.'}</p>
+      <p class="lead">${score === items.length ? 'Все ответы верные. Переходи к пробному экзамену.' : score >= items.length * 0.8 ? 'Хорошо. Разбери ошибки ниже и пройди тест ещё раз завтра.' : 'Вернись к теории по вопросам с ошибками, потом пройди тест ещё раз.'}</p>
       ${wrong.length ? `<h3>Ошибки</h3><ol class="mistakes">${wrong.map((a) => `<li><p>${esc(a.q.q)}</p>${a.q.sql ? `<pre class="sql">${hl(a.q.sql)}</pre>` : ''}<p class="small">Твой ответ: <b>${esc(a.given)}</b>. Верно: <b>${esc(a.right)}</b>. ${esc(a.q.why || '')}</p></li>`).join('')}</ol>` : ''}
       <div class="bar"><button class="btn" id="again" type="button">Пройти ещё раз</button><a class="btn pen" href="#exam">К пробному экзамену</a></div></article>`;
     $('#again').onclick = () => { testRun = null; views.test(); };
@@ -707,9 +822,10 @@ const LEVELS = 4, PTS = 25, PASS = 50, EXAM_MINUTES = [60, 90, 120];
 let exam = null;
 const examSave = () => { try { sessionStorage.setItem('exam.v2', JSON.stringify(exam)); } catch {} };
 try { const e = JSON.parse(sessionStorage.getItem('exam.v2') || 'null'); if (e && !e.done && e.end > now()) exam = e; } catch {}
-const examTask = (id) => EXAM_TASKS.find((t) => t.id === id);
+const examTask = (id) => ALL.exam.find((t) => t.id === id);
 function pickTask(level) {
-  const pool = EXAM_TASKS.filter((t) => t.level === level);
+  const topics = exam.topics || ['select'];
+  const pool = ALL.exam.filter((t) => t.level === level && topics.includes(examTopic.get(t.id)));
   const fresh = pool.filter((t) => !exam.used.includes(t.id));
   const t = shuffle(fresh.length ? fresh : pool)[0];
   exam.used.push(t.id);
@@ -796,6 +912,7 @@ views.exam = () => {
       <form id="exam-setup" class="setup">
         <label for="ex-min">Длительность</label>
         <select id="ex-min">${EXAM_MINUTES.map((m) => `<option value="${m}" ${m === 60 ? 'selected' : ''}>${m} минут</option>`).join('')}</select>
+        <fieldset class="ex-topics"><legend>Темы заданий</legend>${TOPICS.map((t) => `<label class="switch"><input type="checkbox" name="ex-topic" value="${t.id}" checked> ${t.n}. ${esc(t.title)}</label>`).join('')}</fieldset>
         <label class="switch"><input type="checkbox" id="ex-run" checked> Можно запускать запросы перед сдачей</label>
         <button class="btn pen" type="submit">Начать экзамен</button>
       </form>
@@ -805,7 +922,9 @@ views.exam = () => {
     $('#exam-setup').onsubmit = (e) => {
       e.preventDefault();
       const minutes = +$('#ex-min').value;
-      exam = { start: now(), end: now() + minutes * MIN, minutes, allowRun: $('#ex-run').checked, level: 1, points: 0, used: [], attempts: [], fails: 0, cooldownUntil: 0, done: false, notes: '', draft: '' };
+      const topics = [...document.querySelectorAll('[name=ex-topic]:checked')].map((x) => x.value);
+      if (!topics.length) { document.querySelector('[name=ex-topic]').focus(); return; }
+      exam = { start: now(), end: now() + minutes * MIN, minutes, allowRun: $('#ex-run').checked, topics, level: 1, points: 0, used: [], attempts: [], fails: 0, cooldownUntil: 0, done: false, notes: '', draft: '' };
       exam.current = pickTask(1);
       examSave(); views.exam(); window.scrollTo(0, 0);
     };

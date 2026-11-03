@@ -1,4 +1,4 @@
-// Контент MVP: тема 1 «SELECT: выборка, фильтрация, сортировка».
+// Контент: тема 1 «SELECT» здесь, тема 2 «JOIN» в topic-join.js.
 // База данных повторяет схему SQL Bootcamp Школы 21 (пиццерии).
 
 export const SEED_SQL = `
@@ -78,20 +78,14 @@ export const SCHEMA = [
   { name: 'person_order', note: 'заказы', cols: ['id', 'person_id → person', 'menu_id → menu', 'order_date'] },
 ];
 
-export const TOPIC = {
-  id: 'select',
-  title: 'SELECT: выборка, фильтрация, сортировка',
-  short: 'SELECT',
-  day: 'Bootcamp Day 00',
-};
-
 // ---------- Теория ----------
 // Каждый раздел: текст, пример для запуска, вопрос «вспомни, не подглядывая».
-export { LESSONS } from './lessons.js';
+import { LESSONS } from './lessons.js';
+import { TOPIC_JOIN } from './topic-join.js';
 
 // ---------- Задачи тренажёра ----------
 // ordered: важен ли порядок строк. Проверка сравнивает результат с эталоном.
-export const TASKS = [
+const TASKS = [
   { id: 't01', level: 1, title: 'Люди из Казани', text: 'Выведи имя и возраст всех людей, которые живут в Казани (<code>Kazan</code>).', ref: `SELECT name, age FROM person WHERE address = 'Kazan'`, ordered: false, hint: "WHERE address = 'Kazan'" },
   { id: 't02', level: 1, title: 'Женщины по алфавиту', text: 'Выведи имена женщин из Казани, отсортированные по имени.', ref: `SELECT name FROM person WHERE address = 'Kazan' AND gender = 'female' ORDER BY name`, ordered: true, hint: 'Два условия через AND, потом ORDER BY name' },
   { id: 't03', level: 1, title: 'Хорошие пиццерии', text: 'Выведи название и рейтинг пиццерий с рейтингом от 3.5 до 5 включительно. Сортировка по рейтингу, сначала лучшие.', ref: `SELECT name, rating FROM pizzeria WHERE rating BETWEEN 3.5 AND 5 ORDER BY rating DESC`, ordered: true, hint: 'BETWEEN 3.5 AND 5 и ORDER BY rating DESC' },
@@ -113,7 +107,7 @@ export const TASKS = [
 ];
 
 // ---------- Пул для пробного экзамена (не пересекается с тренажёром) ----------
-export const EXAM_TASKS = [
+const EXAM_TASKS = [
   { id: 'e01', level: 1, title: 'Взрослые мужчины', text: 'Выведи имя и возраст мужчин старше 18 лет. Сортировка по возрасту по убыванию.', ref: `SELECT name, age FROM person WHERE gender = 'male' AND age > 18 ORDER BY age DESC`, ordered: true },
   { id: 'e02', level: 1, title: 'Пиццерии с рейтингом', text: 'Выведи названия пиццерий с рейтингом ниже 4, по алфавиту.', ref: `SELECT name FROM pizzeria WHERE rating < 4 ORDER BY name`, ordered: true },
   { id: 'e03', level: 2, title: 'Пиццы на «s»', text: 'Выведи уникальные названия пицц, которые начинаются на букву «s». Сортировка по названию.', ref: `SELECT DISTINCT pizza_name FROM menu WHERE pizza_name LIKE 's%' ORDER BY pizza_name`, ordered: true },
@@ -133,7 +127,7 @@ export const EXAM_TASKS = [
 
 // ---------- Карточки для интервального повторения ----------
 // type 'recall': вспомни и оцени себя. type 'write': напиши запрос, проверка автоматически.
-export const CARDS = [
+const CARDS = [
   { id: 'c01', type: 'recall', q: 'Порядок выполнения: FROM, WHERE, SELECT, ORDER BY, LIMIT. Расставь.', a: 'FROM → WHERE → SELECT → ORDER BY → LIMIT' },
   { id: 'c02', type: 'recall', q: 'Почему нельзя написать WHERE alias > 5, если alias объявлен в SELECT?', a: 'WHERE выполняется раньше SELECT, алиаса ещё нет.' },
   { id: 'c03', type: 'recall', q: 'Как проверить, что значение пустое (NULL)?', a: 'col IS NULL. Сравнение col = NULL никогда не даёт TRUE.' },
@@ -157,7 +151,7 @@ export const CARDS = [
 ];
 
 // ---------- Тест по теме ----------
-export const TEST = [
+const TEST = [
   { id: 'q1', type: 'choice', q: 'Какой запрос вернёт людей, у которых address не заполнен?', options: ["WHERE address = NULL", "WHERE address IS NULL", "WHERE address = ''", "WHERE NOT address"], correct: 1, why: 'С NULL работает только IS NULL.' },
   { id: 'q2', type: 'choice', q: 'Что выполнится раньше?', options: ['SELECT', 'ORDER BY', 'WHERE', 'LIMIT'], correct: 2, why: 'FROM → WHERE → SELECT → ORDER BY → LIMIT.' },
   { id: 'q3', type: 'count', q: 'Сколько строк вернёт запрос?', sql: `SELECT name FROM person WHERE age BETWEEN 18 AND 24;`, why: 'BETWEEN включает обе границы.' },
@@ -168,6 +162,20 @@ export const TEST = [
   { id: 'q8', type: 'choice', q: "Что найдёт LIKE '_a%'?", options: ['Строки, начинающиеся на a', 'Строки, где вторая буква a', 'Строки, заканчивающиеся на a', 'Строки ровно из 2 символов'], correct: 1, why: '_ это ровно один любой символ.' },
   { id: 'q9', type: 'count', q: 'Сколько строк вернёт запрос?', sql: `SELECT * FROM menu WHERE price > 900 OR pizzeria_id = 5 AND price < 800;`, why: 'Сначала AND, потом OR.' },
   { id: 'q10', type: 'write', q: 'Напиши запрос: имя и возраст трёх самых молодых людей (при равенстве по имени).', ref: `SELECT name, age FROM person ORDER BY age, name LIMIT 3`, ordered: true },
+];
+
+// ---------- Темы по порядку ----------
+// id задач, карточек и вопросов уникальны во всех темах: прогресс хранится общим словарём.
+export const TOPICS = [
+  {
+    id: 'select', n: 1,
+    title: 'SELECT: выборка, фильтрация, сортировка',
+    short: 'SELECT',
+    day: 'Bootcamp Day 00',
+    lead: 'Одна таблица: выбрать колонки, отфильтровать строки, отсортировать, посчитать выражения, CASE и простые подзапросы.',
+    lessons: LESSONS, tasks: TASKS, exam: EXAM_TASKS, cards: CARDS, test: TEST,
+  },
+  TOPIC_JOIN,
 ];
 
 export const METHOD = [
