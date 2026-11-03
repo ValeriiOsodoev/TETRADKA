@@ -62,6 +62,13 @@ ${demo(`SELECT po.order_date, p.name
 FROM person_order po
 JOIN person p ON po.person_id = p.id
 WHERE p.address = 'Kazan';`, 'po это person_order, p это person. После JOIN можно, как обычно, фильтровать через WHERE.')}
+<p>Откуда база знает, что такое <code>po</code> и <code>p</code>? Прозвище объявляется во FROM и JOIN: слово сразу после имени таблицы.</p>
+${parts([
+  ['FROM person_order po', '«таблицу person_order дальше зовём po»'],
+  ['JOIN person p', '«таблицу person дальше зовём p»'],
+  ['AS', 'можно писать и так: <code>FROM person_order AS po</code>, это то же самое'],
+])}
+<p>В тексте <code>SELECT po.order_date</code> стоит раньше, чем <code>FROM person_order po</code>. Но вспомни порядок выполнения: база сначала читает FROM и JOIN и запоминает прозвища, а SELECT выполняет потом. К этому моменту она уже знает, кто такие <code>po</code> и <code>p</code>.</p>
 <p>Важно:</p>
 <ul>
 <li>Если прозвище дал, дальше пиши только его: <code>p.name</code>, а не <code>person.name</code>.</li>
