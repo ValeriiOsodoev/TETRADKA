@@ -4,6 +4,7 @@
 
 const attr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const demo = (sql, note = '') => `<div class="demo" data-sql="${attr(sql)}"${note ? ` data-note="${attr(note)}"` : ''}></div>`;
+const viz = (sql) => `<div class="viz-inline" data-sql="${attr(sql)}"></div>`;
 const parts = (rows) => `<table class="parts"><tbody>${rows.map(([code, text]) => `<tr><td><code>${code}</code></td><td>${text}</td></tr>`).join('')}</tbody></table>`;
 
 export const LESSONS = [
@@ -279,29 +280,42 @@ ${demo(`SELECT (SELECT name FROM person WHERE id = po.person_id) AS name, order_
   },
   {
     id: 'l-flow',
-    title: 'Как всё работает вместе',
+    title: 'В каком порядке база выполняет запрос',
     html: `
-<p>Теперь соберём всё в один запрос. Важная вещь: запрос <b>пишется</b> в одном порядке, а <b>выполняется</b> в другом.</p>
+<p>Запрос мы пишем как просьбу: «<b>покажи</b> имя и возраст (SELECT) <b>из</b> таблицы людей (FROM) <b>тех, кто</b> старше 20 (WHERE), <b>по</b> возрасту (ORDER BY), <b>первые</b> 4 (LIMIT)». Так удобно читать человеку.</p>
+<p>Но база не может сразу «показать имя и возраст»: она ещё не знает, из какой таблицы их брать и каких людей оставить. Поэтому она выполняет запрос <b>не сверху вниз</b>, а как повар по рецепту:</p>
+<table class="parts flow"><tbody>
+<tr><td><b>1. FROM</b></td><td>открывает таблицу, все строки и колонки</td><td class="muted">достаёт продукты из холодильника</td></tr>
+<tr><td><b>2. WHERE</b></td><td>проверяет каждую строку, неподходящие выбрасывает</td><td class="muted">выкидывает испорченные</td></tr>
+<tr><td><b>3. SELECT</b></td><td>оставляет нужные колонки, считает выражения, даёт имена через AS</td><td class="muted">режет то, что пойдёт в блюдо</td></tr>
+<tr><td><b>4. ORDER BY</b></td><td>сортирует строки</td><td class="muted">красиво раскладывает</td></tr>
+<tr><td><b>5. LIMIT</b></td><td>отрезает лишнее</td><td class="muted">подаёт первые 4 порции</td></tr>
+</tbody></table>
 <div class="order-strip" aria-label="Порядок выполнения">
   <div><span>пишем</span><b>SELECT</b><b>FROM</b><b>WHERE</b><b>ORDER BY</b><b>LIMIT</b></div>
   <div><span>выполняется</span><b class="o1">1 FROM</b><b class="o2">2 WHERE</b><b class="o3">3 SELECT</b><b class="o4">4 ORDER BY</b><b class="o5">5 LIMIT</b></div>
 </div>
-<ol>
-<li><b>FROM</b>: берём таблицу.</li>
-<li><b>WHERE</b>: выбрасываем ненужные строки.</li>
-<li><b>SELECT</b>: оставляем нужные колонки и считаем выражения.</li>
-<li><b>ORDER BY</b>: сортируем.</li>
-<li><b>LIMIT</b>: обрезаем.</li>
-</ol>
-<p>Отсюда правило, которое часто проверяют: имя, придуманное через <code>AS</code> в SELECT, нельзя использовать в WHERE, потому что WHERE выполняется раньше и этого имени ещё нет. А в ORDER BY можно.</p>
-<p>Запусти пример ниже и нажми «Показать выполнение», потом «Проиграть»: таблица пройдёт все пять шагов.</p>`,
-    example: `SELECT name, age
+<p>Посмотри своими глазами. Слева запрос, как он написан, номер у строки показывает, каким по счёту её выполняет база. Нажимай «Дальше»: подсветка прыгает со второй строки на третью, потом <b>обратно на первую</b>, и только потом вниз.</p>
+${viz(`SELECT name, age
 FROM person
 WHERE age > 20
 ORDER BY age DESC
-LIMIT 4;`,
-    exampleNote: '',
-    recall: { q: 'Расставь по порядку выполнения: SELECT, LIMIT, FROM, ORDER BY, WHERE.', a: 'FROM → WHERE → SELECT → ORDER BY → LIMIT' },
+LIMIT 4;`)}
+<h3>Зачем это знать</h3>
+<p>Из порядка выполнения следуют правила, на которых часто ошибаются на экзамене:</p>
+<ol>
+<li><b>Имя из AS нельзя использовать в WHERE.</b> WHERE выполняется вторым, а SELECT третьим, и имени ещё нет. Запрос <code>SELECT age * 2 AS dbl FROM person WHERE dbl &gt; 30</code> даст ошибку <code>column "dbl" does not exist</code>. В WHERE пиши само выражение: <code>WHERE age * 2 &gt; 30</code>.</li>
+<li><b>В ORDER BY имя из AS можно.</b> Сортировка идёт после SELECT, имя уже есть: <code>ORDER BY dbl</code>.</li>
+<li><b>LIMIT отрезает уже отсортированный список.</b> Поэтому «3 самых старших» это <code>ORDER BY age DESC LIMIT 3</code>: база сначала сортирует, потом берёт первые 3.</li>
+<li><b>WHERE не видит, что ты выбрал в SELECT.</b> Фильтровать можно по любой колонке таблицы, даже если её нет в ответе: <code>SELECT name FROM person WHERE age &gt; 20</code>.</li>
+</ol>
+<p>Эту же пошаговую картинку можно открыть для любого своего запроса: кнопка «Показать выполнение» под редактором.</p>`,
+    example: `SELECT name, age * 2 AS dbl
+FROM person
+WHERE age > 20
+ORDER BY dbl DESC;`,
+    exampleNote: 'Запусти и нажми «Показать выполнение». Потом замени WHERE age > 20 на WHERE dbl > 40 и запусти: увидишь ошибку, потому что на шаге WHERE имени dbl ещё нет.',
+    recall: { q: 'Расставь по порядку выполнения: SELECT, LIMIT, FROM, ORDER BY, WHERE. Почему имя из AS нельзя использовать в WHERE?', a: 'FROM → WHERE → SELECT → ORDER BY → LIMIT. WHERE выполняется раньше SELECT, поэтому имени из AS на этом шаге ещё нет.' },
   },
   {
     id: 'l-check',

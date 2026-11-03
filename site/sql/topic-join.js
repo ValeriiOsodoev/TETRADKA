@@ -3,6 +3,7 @@
 
 const attr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const demo = (sql, note = '') => `<div class="demo" data-sql="${attr(sql)}"${note ? ` data-note="${attr(note)}"` : ''}></div>`;
+const viz = (sql) => `<div class="viz-inline" data-sql="${attr(sql)}"></div>`;
 const parts = (rows) => `<table class="parts"><tbody>${rows.map(([code, text]) => `<tr><td><code>${code}</code></td><td>${text}</td></tr>`).join('')}</tbody></table>`;
 
 const LESSONS = [
@@ -67,7 +68,12 @@ WHERE p.address = 'Kazan';`, 'po это person_order, p это person. Посл�
 <li>Если колонка есть в обеих таблицах (например, <code>id</code>), без прозвища будет ошибка <code>column reference "id" is ambiguous</code> («непонятно, какой id»). Пиши <code>p.id</code> или <code>po.id</code>.</li>
 <li>Строки, которым не нашлось пары, в ответ <b>не попадают</b>. Поэтому такой JOIN ещё называют INNER JOIN («внутренний»). <code>JOIN</code> и <code>INNER JOIN</code> это одно и то же.</li>
 </ul>
-<p>Нажми «Показать выполнение» у примера ниже: первым шагом таблицы склеятся, потом WHERE выбросит лишние строки.</p>`,
+<p>Посмотри, как база выполняет такой запрос. JOIN это часть FROM, поэтому таблицы склеиваются в самом начале, а WHERE уже видит колонки обеих таблиц:</p>
+${viz(`SELECT p.name, pv.visit_date
+FROM person_visits pv
+JOIN person p ON pv.person_id = p.id
+WHERE pv.visit_date = '2022-01-01'
+ORDER BY p.name;`)}`,
     extraHtml: `<p class="muted small">Ещё бывает <code>NATURAL JOIN</code>: он сам склеивает по колонкам с одинаковыми именами. В нашей базе это опасно: у всех таблиц есть <code>id</code>, и он склеит по id. На экзамене пиши ON явно.</p>`,
     example: `SELECT p.name, pv.visit_date
 FROM person_visits pv

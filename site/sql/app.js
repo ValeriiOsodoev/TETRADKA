@@ -254,68 +254,130 @@ function parseSimple(sqlRaw) {
   let list = part('select'); const from = part('from');
   if (!from) return { error: 'В запросе нет FROM.' };
   if (/\bselect\b/i.test(from)) return { error: 'Подзапрос во FROM визуализация не показывает. Запусти запрос, чтобы увидеть ответ.' };
-  const refs = [];
-  const re = new RegExp(`(?:^|,|\\bjoin)\\s*([a-z_][a-z0-9_]*)(\\s*\\()?(?:\\s+(?:as\\s+)?${NOT_ALIAS}([a-z_][a-z0-9_]*))?`, 'gi');
-  let m;
-  while ((m = re.exec(from))) {
-    if (m[2]) return { error: 'Функции во FROM (например, generate_series) визуализация не показывает. Запусти запрос, чтобы увидеть ответ.' };
-    refs.push({ table: m[1], alias: m[3] || null });
-  }
+  if (/(?:^|,|\bjoin)\s*[a-z_][a-z0-9_]*\s*\(/i.test(from)) return { error: 'Функции во FROM (например, generate_series) визуализация не показывает. Запусти запрос, чтобы увидеть ответ.' };
+  const refs = refsIn(from);
   if (!refs.length) return { error: 'Не получилось разобрать FROM.' };
   let distinct = false;
   if (/^distinct\s/i.test(list)) { distinct = true; list = list.replace(/^distinct\s+/i, ''); }
   return { sql, list, from, refs, table: refs[0].table, alias: refs[0].alias, multi: refs.length > 1, where: part('where'), order: part('order by'), limit: part('limit'), offset: part('offset'), distinct };
 }
 const refName = (r) => r.alias || r.table;
+const refsIn = (text) => { const out = []; const re = new RegExp(`(?:^|,|\\bjoin)\\s*([a-z_][a-z0-9_]*)(?:\\s+(?:as\\s+)?${NOT_ALIAS}([a-z_][a-z0-9_]*))?`, 'gi'); let m; while ((m = re.exec(text))) out.push({ table: m[1], alias: m[2] || null }); return out; };
 // ключ строки: ctid каждой таблицы (у пустой половины LEFT/FULL JOIN ctid нет, будет «-»)
-const keyExpr = (p) => p.refs.map((r) => `coalesce(${refName(r)}.ctid::text, '-')`).join(` || '|' || `);
-const ordExpr = (p) => p.refs.map((r) => `${refName(r)}.ctid`).join(', ');
-async function baseRows(p) {
-  const from = `FROM ${p.from}`;
-  const res = await run(`SELECT ${p.refs.map((r) => refName(r) + '.*').join(', ')}, ${keyExpr(p)} AS __k ${from} ORDER BY ${ordExpr(p)}`);
+const keyOf = (refs) => refs.map((r) => `coalesce(${refName(r)}.ctid::text, '-')`).join(` || '|' || `);
+const ordOf = (refs) => refs.map((r) => `${refName(r)}.ctid`).join(', ');
+const keyExpr = (p) => keyOf(p.refs);
+const ordExpr = (p) => ordOf(p.refs);
+async function baseRowsFrom(refs, fromText, labelled) {
+  const from = `FROM ${fromText}`;
+  const res = await run(`SELECT ${refs.map((r) => refName(r) + '.*').join(', ')}, ${keyOf(refs)} AS __k ${from} ORDER BY ${ordOf(refs)}`);
   const raw = res.fields.slice(0, -1);
   let labels = raw;
-  if (p.multi) {
+  if (labelled) {
     labels = [];
-    for (const r of p.refs) { const f = await run(`SELECT ${refName(r)}.* ${from} LIMIT 0`); labels.push(...f.fields.map((x) => `${refName(r)}.${x}`)); }
+    for (const r of refs) { const f = await run(`SELECT ${refName(r)}.* ${from} LIMIT 0`); labels.push(...f.fields.map((x) => `${refName(r)}.${x}`)); }
   }
   const k = res.fields.length - 1;
   return { raw, labels, rows: res.rows.map((r) => ({ key: r[k], cells: r.slice(0, k) })) };
 }
-function joinText(p, n) {
-  const f = p.from.toLowerCase();
-  const kind = /\bfull\b/.test(f) ? 'FULL JOIN оставляет строки без пары с обеих сторон, пустые клетки это NULL'
-    : /\b(left|right)\b/.test(f) ? 'строки без пары тоже остаются, их пустые клетки это NULL'
-    : /\bcross\b|,/.test(f) ? 'каждая строка с каждой'
-    : 'остаются только пары, для которых верно условие ON';
-  return `Склеиваем таблицы ${p.refs.map((r) => r.table).join(', ')}: ${kind}. Получилось ${n} ${plural(n, 'строка', 'строки', 'строк')}.`;
+const baseRows = (p) => baseRowsFrom(p.refs, p.from, p.multi);
+// какие колонки исходных таблиц упомянуты в SELECT
+function usedCols(p, B) {
+  const listLow = ' ' + p.list.toLowerCase().replace(/'(?:[^']|'')*'/g, '') + ' ';
+  const star = p.list.trim() === '*';
+  return B.labels.map((lab, j) => {
+    if (star) return true;
+    const col = B.raw[j].toLowerCase();
+    const bare = new RegExp('[^a-z0-9_.]' + col + '[^a-z0-9_]').test(listLow);
+    if (!p.multi) return bare;
+    const [al] = lab.toLowerCase().split('.');
+    return new RegExp('[^a-z0-9_]' + al + '\\.(' + col + '|\\*)[^a-z0-9_]').test(listLow) || (bare && B.raw.filter((x) => x === B.raw[j]).length === 1);
+  });
+}
+const JOIN_KW = /\b(?:natural\s+)?(?:(?:left|right|full)(?:\s+outer)?\s+|inner\s+|cross\s+)?join\b/gi;
+function splitFrom(from) {
+  const idx = [...from.matchAll(JOIN_KW)].map((m) => m.index);
+  const segs = [from.slice(0, idx[0] ?? from.length).trim()];
+  idx.forEach((s, i) => segs.push(from.slice(s, idx[i + 1] ?? from.length).trim()));
+  return segs;
+}
+const oneLine = (s) => s.replace(/\s+/g, ' ').trim();
+const nRows = (n) => `${n} ${plural(n, 'строка', 'строки', 'строк')}`;
+
+function joinSay(seg, table, before, n) {
+  const low = seg.toLowerCase();
+  const on = (seg.match(/\bon\b([\s\S]*)$/i) || [])[1];
+  if (/^cross/.test(low)) return `Приклеивает таблицу ${table}: каждую строку склеивает с каждой строкой ${table}. Было ${before}, стало ${nRows(n)}.`;
+  const cond = on ? `«${oneLine(on)}»` : 'совпадение колонок';
+  if (/^(left|right)/.test(low)) return `Приклеивает таблицу ${table}: к каждой строке ищет пару, для которой верно ${cond}. ${/^left/.test(low) ? 'Строки слева' : 'Строки справа'} без пары не выбрасываются, их пустые клетки это NULL. Получилось ${nRows(n)}.`;
+  if (/^full/.test(low)) return `Приклеивает таблицу ${table}: ищет пары по условию ${cond}. Строки без пары остаются с обеих сторон, пустые клетки это NULL. Получилось ${nRows(n)}.`;
+  return `Приклеивает таблицу ${table}: к каждой строке ищет пару, для которой верно ${cond}. Строки без пары выбрасываются. Получилось ${nRows(n)}.`;
 }
 
+// Пошаговое выполнение: каждая строка кода запроса превращается в один шаг (или несколько).
 async function buildSteps(p) {
+  const segs = splitFrom(p.from);
+  const lines = [{ c: 'select', text: `SELECT ${p.distinct ? 'DISTINCT ' : ''}${oneLine(p.list)}` }, { c: 'from', text: `FROM ${oneLine(segs[0])}` }];
+  segs.slice(1).forEach((s, i) => lines.push({ c: 'join' + i, text: oneLine(s) }));
+  if (p.where) lines.push({ c: 'where', text: `WHERE ${oneLine(p.where)}` });
+  if (p.order) lines.push({ c: 'order', text: `ORDER BY ${oneLine(p.order)}` });
+  if (p.limit) lines.push({ c: 'limit', text: `LIMIT ${p.limit}` });
+  if (p.offset) lines.push({ c: 'offset', text: `OFFSET ${p.offset}` });
   const fromSql = `FROM ${p.from}`;
   const whereSql = p.where ? ` WHERE ${p.where}` : '';
-  const B = await baseRows(p);
   const steps = [];
-  const fromTitle = `FROM ${p.from.replace(/\s+/g, ' ')}`;
-  steps.push({ clause: 'from', title: fromTitle, text: p.multi ? joinText(p, B.rows.length) : `Берём все строки таблицы ${p.table}: ${B.rows.length}.`, fields: B.labels, rows: B.rows.map((r) => ({ ...r })) });
-  if (p.where) {
-    const pass = await run(`SELECT ${keyExpr(p)} ${fromSql}${whereSql}`);
-    const ok = new Set(pass.rows.map((r) => r[0]));
-    steps.push({ clause: 'where', title: `WHERE ${p.where}`, text: `Проверяем условие для каждой строки. Подходят ${pass.rows.length} из ${B.rows.length}, остальные отбрасываем.`, fields: B.labels, rows: B.rows.map((r) => ({ ...r, out: !ok.has(r.key) })) });
+  const col = (name, state = '') => ({ name, state });
+
+  // 1. FROM (и по шагу на каждый JOIN)
+  let cum = segs[0];
+  const r0 = refsIn(cum);
+  let prev = await baseRowsFrom(r0, cum, p.multi);
+  steps.push({ lines: ['from'], name: 'FROM', say: p.multi && r0.length === 1 ? `База начинает с FROM, хотя он написан второй строкой. Открывает первую таблицу, ${r0[0].table}: ${nRows(prev.rows.length)}.` : r0.length > 1 ? `База начинает с FROM. Таблиц через запятую несколько: каждая строка склеивается с каждой. Получилось ${nRows(prev.rows.length)}.` : `База начинает с FROM, хотя он написан второй строкой. Открывает таблицу ${r0[0].table}: ${nRows(prev.rows.length)}. Пока берутся все строки и все колонки.`, fields: prev.labels.map((f) => col(f)), rows: prev.rows, fresh: true });
+  for (let i = 1; i < segs.length; i++) {
+    cum += ' ' + segs[i];
+    const refs = refsIn(cum);
+    const before = nRows(prev.rows.length);
+    const cur2 = await baseRowsFrom(refs, cum, true);
+    const t = refs[refs.length - 1];
+    const newFrom = cur2.labels.map((l) => !prev.labels.includes(l) && l.startsWith(refName(t) + '.'));
+    steps.push({ lines: ['join' + (i - 1)], name: 'JOIN', say: joinSay(segs[i], t.table, before, cur2.rows.length), fields: cur2.labels.map((f, j) => col(f, newFrom[j] ? 'new' : '')), rows: cur2.rows, fresh: true });
+    prev = cur2;
   }
+  const B = prev;
+
+  // 2. WHERE: проверка каждой строки
+  let alive = B.rows;
+  if (p.where) {
+    const chk = await run(`SELECT ${keyExpr(p)}, (${p.where})::text ${fromSql}`);
+    const val = new Map(chk.rows.map((r) => [r[0], r[1]]));
+    const marked = B.rows.map((r) => { const v = val.get(r.key); return { ...r, test: v === 'true' ? 'yes' : v === 'false' ? 'no' : 'null', out: v !== 'true' }; });
+    const k = marked.filter((r) => !r.out).length, nulls = marked.filter((r) => r.test === 'null').length;
+    steps.push({ lines: ['where'], name: 'WHERE', say: `Проверяет условие «${oneLine(p.where)}» для каждой строки по очереди. ✓ строка остаётся, ✗ выбрасывается. Подошло ${k} из ${B.rows.length}.${nulls ? ' Где в условии получился NULL (пусто), ответ не «да», и строка тоже выбрасывается.' : ''}`, fields: B.labels.map((f) => col(f)), rows: marked, test: true });
+    alive = marked.filter((r) => !r.out);
+  }
+
+  // 3. SELECT: какие колонки остаются, какие считаются
   const pr = await run(`SELECT ${p.list}, ${keyExpr(p)} AS __k ${fromSql}${whereSql} ORDER BY ${ordExpr(p)}`);
   const pk = pr.fields.length - 1;
-  const proj = { fields: pr.fields.slice(0, -1), rows: pr.rows.map((r) => ({ key: r[pk], cells: r.slice(0, pk) })) };
-  const computed = proj.fields.map((f) => !B.raw.includes(f));
-  const dropped = p.multi ? [] : B.raw.filter((f) => !proj.fields.includes(f));
-  steps.push({ clause: 'select', title: `SELECT ${p.list}`, text: `Оставляем ${proj.fields.length} ${plural(proj.fields.length, 'колонку', 'колонки', 'колонок')}${dropped.length && dropped.length < B.raw.length ? `, отбрасываем ${dropped.join(', ')}` : ''}${computed.some(Boolean) ? '. Подсвеченные колонки вычислены выражением или переименованы через AS' : ''}.`, fields: proj.fields, computed, rows: proj.rows });
-  let rows = proj.rows;
+  const projFields = pr.fields.slice(0, -1);
+  const projRows = pr.rows.map((r) => ({ key: r[pk], cells: r.slice(0, pk) }));
+  const byKey = new Map(projRows.map((r) => [r.key, r.cells]));
+  const used = usedCols(p, B);
+  const isNew = projFields.map((f) => !B.raw.includes(f));
+  const newIdx = isNew.map((x, j) => (x ? j : -1)).filter((j) => j >= 0);
+  const aliases = [...p.list.matchAll(/\bas\s+([a-z_][a-z0-9_]*)/gi)].map((m) => m[1]);
+  steps.push({ lines: ['select'], name: 'SELECT', say: `Только теперь база читает первую строку запроса, SELECT. ${p.list.trim() === '*' ? 'Звёздочка: остаются все колонки.' : `Синие колонки попадут в ответ, серые выбрасываются${newIdx.length ? ', а колонки с пометкой «новая» посчитаны выражением' : ''}.`}${aliases.length ? ` Имена ${aliases.join(', ')} из AS появляются только сейчас, поэтому в WHERE их использовать было нельзя.` : ''}`,
+    fields: [...B.labels.map((f, j) => col(f, used[j] ? 'keep' : 'drop')), ...newIdx.map((j) => col(projFields[j], 'new'))],
+    rows: alive.map((r) => ({ key: r.key, cells: [...r.cells, ...newIdx.map((j) => (byKey.get(r.key) || [])[j])] })) });
+  const pf = projFields.map((f, j) => col(f, isNew[j] ? 'new' : ''));
+  steps.push({ lines: ['select'], name: 'SELECT', say: `Остались только колонки из SELECT: ${projFields.join(', ')}.`, fields: pf, rows: projRows });
+  let rows = projRows;
   const vk = (r) => rowKey(r.cells);
   if (p.distinct) {
     const seen = new Set();
     const marked = rows.map((r) => { const d = seen.has(vk(r)); seen.add(vk(r)); return { ...r, out: d }; });
     const dup = marked.filter((r) => r.out).length;
-    steps.push({ clause: 'distinct', title: 'DISTINCT', text: dup ? `Убираем повторы: ${dup} ${plural(dup, 'строка дублирует', 'строки дублируют', 'строк дублируют')} уже встреченные.` : 'Повторов нет, все строки уникальны.', fields: proj.fields, computed, rows: marked });
+    steps.push({ lines: ['select'], name: 'DISTINCT', say: dup ? `DISTINCT: убирает повторы. ${dup} ${plural(dup, 'строка повторяет', 'строки повторяют', 'строк повторяют')} уже встреченные, они зачёркнуты.` : 'DISTINCT: повторов нет, все строки разные.', fields: pf, rows: marked });
     rows = marked.filter((r) => !r.out);
   }
   if (p.order) {
@@ -323,23 +385,24 @@ async function buildSteps(p) {
     const pos = new Map();
     if (p.distinct) { ord.rows.forEach((r, i) => { const key = rowKey(r.slice(0, -1)); if (!pos.has(key)) pos.set(key, i); }); rows = rows.slice().sort((a, b) => pos.get(vk(a)) - pos.get(vk(b))); }
     else { ord.rows.forEach((r, i) => pos.set(r[r.length - 1], i)); rows = rows.slice().sort((a, b) => pos.get(a.key) - pos.get(b.key)); }
-    steps.push({ clause: 'order', title: `ORDER BY ${p.order}`, text: 'Переставляем строки. Сортировка идёт после SELECT, поэтому здесь можно использовать алиасы.', fields: proj.fields, computed, rows, flip: true });
+    const sortCols = pf.map((f) => col(f.name, new RegExp('(^|[^a-z0-9_.])' + f.name + '([^a-z0-9_]|$)', 'i').test(p.order) ? 'sort' : f.state));
+    steps.push({ lines: ['order'], name: 'ORDER BY', say: `Сортирует строки по ${oneLine(p.order)}${/desc/i.test(p.order) ? ' (DESC: от большего к меньшему)' : ''}. Сортировка идёт после SELECT, поэтому здесь уже можно использовать имена из AS.`, fields: sortCols, rows, flip: true });
   }
   if (p.limit || p.offset) {
     const off = Number(p.offset || 0), lim = p.limit && !/^all$/i.test(p.limit) ? Number(p.limit) : Infinity;
     const marked = rows.map((r, i) => ({ ...r, out: i < off || i >= off + lim }));
     const kept = marked.filter((r) => !r.out).length;
-    steps.push({ clause: 'limit', title: [p.limit && `LIMIT ${p.limit}`, p.offset && `OFFSET ${p.offset}`].filter(Boolean).join(' '), text: `${off ? `Пропускаем первые ${off}, оставляем` : 'Оставляем'} ${kept} ${plural(kept, 'строку', 'строки', 'строк')}.`, fields: proj.fields, computed, rows: marked });
+    steps.push({ lines: ['limit', 'offset'], name: p.limit ? 'LIMIT' : 'OFFSET', say: `Последний шаг: ${off ? `пропускает первые ${off} и ` : ''}оставляет ${nRows(kept)}${p.order ? ' уже отсортированного списка' : ''}. Остальное отрезано.`, fields: pf, rows: marked });
     rows = marked.filter((r) => !r.out);
   }
-  steps.push({ clause: 'result', title: 'Результат', text: `${rows.length} ${plural(rows.length, 'строка', 'строки', 'строк')} в ответе.`, fields: proj.fields, computed, rows: rows.map((r) => ({ ...r, out: false })) });
-  // убрать строки, отброшенные на прошлых шагах
-  let alive = null;
+  steps.push({ lines: [], name: 'Ответ', say: `Готово. В ответе ${nRows(rows.length)}: столько и увидит проверка.`, fields: pf, rows: rows.map((r) => ({ ...r, out: false })), result: true });
+  // строки, зачёркнутые на шаге, на следующем шаге исчезают
+  let aliveKeys = null;
   for (const s of steps) {
-    if (alive && s.clause !== 'select') s.rows = s.rows.filter((r) => alive.has(r.key));
-    alive = new Set(s.rows.filter((r) => !r.out).map((r) => r.key));
+    if (aliveKeys && !s.fresh) s.rows = s.rows.filter((r) => aliveKeys.has(r.key));
+    aliveKeys = new Set(s.rows.filter((r) => !r.out).map((r) => r.key));
   }
-  return steps;
+  return { lines, steps };
 }
 
 /* UNION / INTERSECT / EXCEPT: два ответа рядом и общий результат */
@@ -364,7 +427,6 @@ async function setopHTML(p) {
   return `<div class="setop"><div class="demo-col"><p class="eyebrow">Первый запрос</p>${miniTable(a, outA)}</div><div class="demo-arrow setop-op" aria-hidden="true">${op}</div><div class="demo-col"><p class="eyebrow">Второй запрос</p>${miniTable(b, outB)}</div><div class="demo-arrow" aria-hidden="true">=</div><div class="demo-col"><p class="eyebrow">Ответ</p>${miniTable(all, all.rows.map(() => false))}</div></div><p class="demo-note">${SETOP_TEXT[p.setop]}</p>`;
 }
 
-const CLAUSE_ORDER = [['from', 'FROM'], ['where', 'WHERE'], ['select', 'SELECT'], ['distinct', 'DISTINCT'], ['order', 'ORDER BY'], ['limit', 'LIMIT']];
 async function visualize(container, sql) {
   container.innerHTML = '';
   const p = parseSimple(sql);
@@ -373,51 +435,68 @@ async function visualize(container, sql) {
     try { container.append(h(`<div class="viz">${await setopHTML(p)}</div>`)); } catch (e) { container.append(h(`<div class="viz-note bad">Запрос с ошибкой, визуализировать нечего: ${esc(e.message)}</div>`)); }
     return;
   }
-  let steps;
-  try { steps = await buildSteps(p); } catch (e) { container.append(h(`<div class="viz-note bad">Запрос с ошибкой, визуализировать нечего: ${esc(e.message)}</div>`)); return; }
-  const present = new Set(steps.map((s) => s.clause));
-  const box = h(`<div class="viz">
-    <ol class="viz-pipe">${CLAUSE_ORDER.filter(([c]) => present.has(c)).map(([c, label], i) => `<li data-c="${c}"><span class="n">${i + 1}</span>${c === 'from' && p.multi ? 'FROM + JOIN' : label}</li>`).join('')}<li data-c="result"><span class="n">✓</span>Ответ</li></ol>
-    <div class="viz-cap"><b class="viz-title"></b><p class="viz-text"></p></div>
+  let plan;
+  try { plan = await buildSteps(p); } catch (e) { container.append(h(`<div class="viz-note bad">Запрос с ошибкой, визуализировать нечего: ${esc(e.message)}</div>`)); return; }
+  const { lines, steps } = plan;
+  // номера шагов для каждой строки кода
+  const nums = new Map(lines.map((l) => [l.c, []]));
+  let n = 0, prevKey = '';
+  steps.forEach((s) => { if (s.result) return; const key = s.lines.join(); if (key !== prevKey || s.name !== 'SELECT') n++; prevKey = key; s.no = n; s.lines.forEach((c) => { const a = nums.get(c); if (a && !a.includes(n)) a.push(n); }); });
+  const total = n;
+  const box = h(`<div class="viz dbg" tabindex="0" aria-label="Пошаговое выполнение запроса. Стрелки влево и вправо переключают шаги.">
+    <div class="dbg-grid">
+      <div class="dbg-code-wrap">
+        <p class="eyebrow">Запрос, как он написан</p>
+        <ol class="dbg-code">${lines.map((l) => `<li data-c="${l.c}"><span class="ord" title="Каким по счёту выполняется">${nums.get(l.c).join(', ') || ''}</span><code>${hl(l.text)}</code></li>`).join('')}</ol>
+        <p class="dbg-hint">Номер слева: каким по счёту база выполняет эту строку. Пишем сверху вниз, а выполняется по номерам.</p>
+      </div>
+      <div class="dbg-say" aria-live="polite"><p class="dbg-step"></p><p class="dbg-text"></p></div>
+    </div>
     <div class="viz-stage tbl-wrap"></div>
-    <div class="viz-ctrl"><button class="btn ghost" data-a="prev" type="button">← Назад</button><button class="btn" data-a="play" type="button">Проиграть</button><button class="btn ghost" data-a="next" type="button">Дальше →</button><span class="viz-pos"></span></div>
+    <div class="viz-ctrl"><button class="btn ghost" data-a="prev" type="button">← Назад</button><button class="btn" data-a="play" type="button">▶ Проиграть</button><button class="btn ghost" data-a="next" type="button">Дальше →</button><span class="viz-pos"></span></div>
   </div>`);
   container.append(box);
   const stage = $('.viz-stage', box);
   let i = 0, timer = null;
+  const cell = (v) => { const t = fmt(v); return t === null ? '<td class="null">NULL</td>' : `<td>${esc(t)}</td>`; };
+  const TEST = { yes: '<td class="t yes" title="условие верно">✓</td>', no: '<td class="t no" title="условие неверно">✗</td>', null: '<td class="t nul" title="NULL: не «да»">✗ NULL</td>' };
   const draw = (idx, animate) => {
     const s = steps[idx];
     const before = new Map();
     if (animate) stage.querySelectorAll('tr[data-k]').forEach((tr) => before.set(tr.dataset.k, tr.getBoundingClientRect().top));
-    $('.viz-title', box).textContent = s.title;
-    $('.viz-text', box).textContent = s.text;
-    $('.viz-pos', box).textContent = `шаг ${idx + 1} из ${steps.length}`;
-    box.querySelectorAll('.viz-pipe li').forEach((li) => { li.classList.toggle('on', li.dataset.c === s.clause); li.classList.toggle('done', steps.slice(0, idx).some((x) => x.clause === li.dataset.c)); });
-    stage.innerHTML = `<table class="res viz-t"><thead><tr>${s.fields.map((f, j) => `<th class="${s.computed && s.computed[j] ? 'calc' : ''}">${esc(f)}</th>`).join('')}</tr></thead><tbody>${s.rows.map((r) => `<tr data-k="${esc(r.key)}" class="${r.out ? 'out' : ''}">${r.cells.map((v) => { const t = fmt(v); return t === null ? '<td class="null">NULL</td>' : `<td>${esc(t)}</td>`; }).join('')}</tr>`).join('')}</tbody></table>`;
-    stage.classList.toggle('pulse', s.clause === 'select');
+    $('.dbg-step', box).innerHTML = s.result ? '<b class="done">✓ Ответ готов</b>' : `<span class="badge">Шаг ${s.no} из ${total}</span> <b>${esc(s.name)}</b>`;
+    $('.dbg-text', box).textContent = s.say;
+    $('.viz-pos', box).textContent = `${idx + 1} / ${steps.length}`;
+    const doneLines = new Set(steps.slice(0, idx).flatMap((x) => x.lines));
+    box.querySelectorAll('.dbg-code li').forEach((li) => { const on = s.lines.includes(li.dataset.c); li.classList.toggle('on', on); li.classList.toggle('done', !on && (s.result || doneLines.has(li.dataset.c))); });
+    const colCls = (f) => f.state ? ` class="${f.state}"` : '';
+    stage.innerHTML = `<table class="res viz-t${s.result ? ' final' : ''}"><thead><tr>${s.test ? '<th class="t">WHERE?</th>' : ''}${s.fields.map((f) => `<th${colCls(f)}>${esc(f.name)}${f.state === 'new' ? '<small>новая</small>' : f.state === 'sort' ? '<small>сортировка</small>' : ''}</th>`).join('')}</tr></thead><tbody>${s.rows.map((r) => `<tr data-k="${esc(r.key)}" class="${r.out ? 'out' : ''}">${s.test ? TEST[r.test] : ''}${r.cells.map((v, j) => cell(v).replace('<td', `<td${s.fields[j]?.state ? ` data-s="${s.fields[j].state}"` : ''}`)).join('')}</tr>`).join('')}</tbody></table>`;
     if (animate && !reduceMotion()) {
-      stage.querySelectorAll('tr[data-k]').forEach((tr) => {
+      stage.querySelectorAll('tr[data-k]').forEach((tr, k) => {
         const old = before.get(tr.dataset.k);
-        if (old == null) { tr.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300 }); return; }
+        if (old == null) { tr.animate([{ opacity: 0, transform: 'translateX(-8px)' }, { opacity: 1, transform: 'none' }], { duration: 350, delay: Math.min(k * 15, 300), fill: 'backwards' }); return; }
         const dy = old - tr.getBoundingClientRect().top;
-        if (dy) tr.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: s.flip ? 700 : 350, easing: 'cubic-bezier(.2,.7,.2,1)' });
+        if (dy) tr.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: s.flip ? 800 : 380, easing: 'cubic-bezier(.2,.7,.2,1)' });
       });
+      if (s.test) stage.querySelectorAll('td.t').forEach((td, k) => td.animate([{ opacity: 0, transform: 'scale(.4)' }, { opacity: 1, transform: 'none' }], { duration: 250, delay: 120 + k * 60, fill: 'backwards' }));
     }
     $('[data-a=prev]', box).disabled = idx === 0;
     $('[data-a=next]', box).disabled = idx === steps.length - 1;
   };
-  const stop = () => { clearInterval(timer); timer = null; $('[data-a=play]', box).textContent = 'Проиграть'; };
+  const stop = () => { clearInterval(timer); timer = null; $('[data-a=play]', box).textContent = '▶ Проиграть'; };
+  const go = (d) => { const j = i + d; if (j < 0 || j >= steps.length) return; stop(); i = j; draw(i, true); };
   box.addEventListener('click', (e) => {
     const a = e.target.closest('button')?.dataset.a; if (!a) return;
-    if (a === 'prev' && i > 0) { stop(); draw(--i, true); }
-    if (a === 'next' && i < steps.length - 1) { stop(); draw(++i, true); }
+    if (a === 'prev') go(-1);
+    if (a === 'next') go(1);
     if (a === 'play') {
       if (timer) return stop();
       if (i === steps.length - 1) { i = 0; draw(0, false); }
-      $('[data-a=play]', box).textContent = 'Пауза';
-      timer = setInterval(() => { if (i >= steps.length - 1) return stop(); draw(++i, true); }, 1700);
+      $('[data-a=play]', box).textContent = '❚❚ Пауза';
+      timer = setInterval(() => { if (i >= steps.length - 1) return stop(); draw(++i, true); }, 2600);
     }
   });
+  box.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') { e.preventDefault(); go(1); } if (e.key === 'ArrowLeft') { e.preventDefault(); go(-1); } });
   draw(0, false);
 }
 
@@ -438,15 +517,7 @@ async function renderDemo(el) {
     const B = await baseRows(p);
     let ok = null;
     if (p.where) ok = new Set((await run(`SELECT ${keyExpr(p)} ${from} WHERE ${p.where}`)).rows.map((r) => r[0]));
-    const listLow = ' ' + p.list.toLowerCase().replace(/'(?:[^']|'')*'/g, '') + ' ';
-    const star = p.list.trim() === '*';
-    const used = B.labels.map((lab, j) => {
-      if (star) return true;
-      const col = B.raw[j];
-      const bare = new RegExp('[^a-z0-9_.]' + col + '[^a-z0-9_]').test(listLow);
-      if (!p.multi) return bare;
-      return listLow.includes(' ' + lab.toLowerCase()) || new RegExp('[^a-z0-9_]' + lab.replace('.', '\\.') + '[^a-z0-9_]').test(listLow) || (bare && B.raw.filter((x) => x === col).length === 1);
-    });
+    const used = usedCols(p, B);
     const head = B.labels.map((f, j) => `<th class="${used[j] ? 'calc' : ''}">${esc(f)}</th>`).join('');
     const rows = B.rows.map((r) => `<tr class="${ok && !ok.has(r.key) ? 'out' : ''}">${r.cells.map((v, j) => `<td class="${used[j] ? 'use' : ''}${fmt(v) === null ? ' null' : ''}">${esc(fmt(v) ?? 'NULL')}</td>`).join('')}</tr>`).join('');
     const kept = ok ? ok.size : B.rows.length;
@@ -639,6 +710,7 @@ views.learn = () => {
   const r = runner({ initial: l.example, rows: Math.min(9, l.example.split('\n').length + 1) });
   $('#ex').append(r.el);
   document.querySelectorAll('.prose .demo').forEach(renderDemo);
+  document.querySelectorAll('.prose .viz-inline').forEach((el) => visualize(el, el.dataset.sql));
   document.querySelectorAll('.prose .demo-table').forEach(async (el) => { el.innerHTML = tableHTML(await run(`SELECT * FROM ${el.dataset.table} ORDER BY id`)); });
   st.lessons[l.id] = { ...(st.lessons[l.id] || {}), read: true }; store.save();
   bindTopicPick('learn');

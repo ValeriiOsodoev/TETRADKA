@@ -42,7 +42,7 @@
 body { background: var(--paper); color: var(--ink); font: 16px/1.55 var(--f-body); margin: 0; }
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--sheet); }
 a { color: var(--pen); }
-code, pre, .code, table.res, .viz-title, .viz-pipe, .order-strip, .answer { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+code, pre, .code, table.res, .viz-title, .viz-pipe, .order-strip, .answer, .dbg-code { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
 code, pre, .code { font-family: var(--f-mono); font-size: .9em; }
 code { background: var(--pen-soft); padding: .05em .35em; border-radius: 4px; }
 h1, h2, h3 { line-height: 1.2; text-wrap: balance; margin: 0 0 .5em; }
@@ -261,6 +261,40 @@ td.use { background: var(--pen-soft); }
 @keyframes pulse { from { box-shadow: 0 0 0 3px var(--pen-soft); } to { box-shadow: 0 0 0 0 transparent; } }
 .viz-ctrl { display: flex; gap: 8px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
 .viz-pos { font: .75rem var(--f-mono); color: var(--muted); margin-left: auto; }
+/* пошаговый «отладчик» запроса */
+.dbg:focus-visible { outline: 2px solid var(--pen); outline-offset: 2px; }
+.dbg-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 14px; }
+@media (max-width: 760px) { .dbg-grid { grid-template-columns: minmax(0, 1fr); } }
+.dbg-code { list-style: none; margin: 0; padding: 6px 0; background: var(--paper); border: 1px solid var(--line); border-radius: var(--r); font: .88rem/1.45 var(--f-mono); }
+.dbg-code li { display: flex; gap: 10px; align-items: baseline; padding: 5px 10px 5px 7px; border-left: 3px solid transparent; transition: background .3s, opacity .3s; }
+.dbg-code li code { background: none; padding: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
+.dbg-code .ord { flex: none; min-width: 22px; height: 22px; padding: 0 5px; display: inline-grid; place-items: center; border-radius: 11px; border: 1px solid var(--line); font-size: .72rem; font-weight: 600; color: var(--muted); background: var(--sheet); }
+.dbg-code li.on { background: var(--amber-soft); border-left-color: var(--amber); }
+.dbg-code li.on .ord { background: var(--amber); border-color: var(--amber); color: var(--sheet); }
+.dbg-code li.done { opacity: .6; }
+.dbg-code li.done .ord { color: var(--ok); border-color: var(--ok); }
+.dbg-hint { font-size: .8rem; color: var(--muted); margin: 6px 0 0; }
+.dbg-say { align-self: start; padding: 14px 16px; border-radius: var(--r); background: var(--pen-soft); min-height: 7.5em; }
+.dbg-step { margin: 0 0 6px; font-size: 1rem; }
+.dbg-step .badge { font: 600 .75rem var(--f-mono); background: var(--pen); color: var(--sheet); padding: 2px 8px; border-radius: 10px; margin-right: 4px; }
+.dbg-step b { font-family: var(--f-mono); color: var(--pen); }
+.dbg-step b.done { color: var(--ok); font-family: var(--f-body); }
+.dbg-text { margin: 0; font-size: 1rem; line-height: 1.5; }
+.viz-t th small { display: block; font: 500 .62rem var(--f-body); text-transform: uppercase; letter-spacing: .05em; }
+.viz-t th.keep, .viz-t td[data-s=keep] { background: var(--pen-soft); }
+.viz-t th.keep { color: var(--pen); }
+.viz-t th.drop, .viz-t td[data-s=drop] { opacity: .35; }
+.viz-t th.drop { text-decoration: line-through; }
+.viz-t th.new, .viz-t td[data-s=new] { background: var(--ok-soft); }
+.viz-t th.new { color: var(--ok); }
+.viz-t th.sort, .viz-t td[data-s=sort] { background: var(--amber-soft); }
+.viz-t th.sort { color: var(--amber); }
+.viz-t th.t, .viz-t td.t { text-align: center; font-weight: 700; white-space: nowrap; }
+.viz-t td.t.yes { color: var(--ok); background: var(--ok-soft); }
+.viz-t td.t.no { color: var(--red); }
+.viz-t td.t.nul { color: var(--amber); font-size: .78rem; }
+.viz-t tr.out td.t { text-decoration: none; }
+table.viz-t.final { outline: 2px solid var(--ok); outline-offset: -1px; }
 
 /* review */
 .boxes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--r); background: var(--sheet); margin: 12px 0 24px; }
