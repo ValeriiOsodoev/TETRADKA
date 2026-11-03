@@ -760,11 +760,11 @@ async function grademe() {
     $('#exam-out').innerHTML = `<div class="verdict ok"><b>SUCCESS</b><span>+${PTS} баллов. Открыт уровень ${exam.level}.</span></div>`;
   } else {
     exam.fails++;
-    const penalty = Math.min(4 * MIN, 30e3 * 2 ** (exam.fails - 1));
+    const penalty = exam.penalty ? Math.min(4 * MIN, 30e3 * 2 ** (exam.fails - 1)) : 0;
     exam.cooldownUntil = now() + penalty;
     exam.current = pickTask(exam.level); exam.draft = '';
     examSave(); views.exam();
-    $('#exam-out').innerHTML = `<div class="verdict bad"><b>FAILURE</b><span>${esc(res.reason)} Выдано новое задание того же уровня. Следующая сдача через ${fmtWait(penalty).replace('меньше минуты', '30 сек')}.</span></div>`;
+    $('#exam-out').innerHTML = `<div class="verdict bad"><b>FAILURE</b><span>${esc(res.reason)} Выдано новое задание того же уровня.${penalty ? ` Кнопка «Сдать» снова заработает через ${fmtWait(penalty).replace('меньше минуты', '30 секунд')}.` : ''}</span></div>`;
   }
   examTimerTick();
 }
@@ -791,22 +791,23 @@ views.exam = () => {
       <ul class="rules">
         <li><b>${LEVELS} уровня, одно задание за раз.</b> Следующий уровень откроется, только когда сдашь текущий. Каждый уровень даёт ${PTS} баллов.</li>
         <li><b>Сдача через автопроверку.</b> Запрос выполняется в PostgreSQL, результат сравнивается с эталоном целиком: колонки, их имена, строки и порядок.</li>
-        <li><b>Ошибка не прощается.</b> После FAILURE выдаётся другое задание того же уровня, а следующая сдача доступна только через некоторое время. Штраф растёт с каждой ошибкой: 30 секунд, минута, две, четыре.</li>
+        <li><b>Ошибка не прощается.</b> После FAILURE выдаётся другое задание того же уровня. Если включить паузу, кнопка «Сдать» после ошибки на время блокируется: 30 секунд, потом минута, две, четыре. Это приучает проверять запрос до сдачи.</li>
         <li><b>Никаких подсказок.</b> Нет эталона, визуализации и автодополнения. Справа есть «листок» для заметок, он не проверяется.</li>
       </ul>
       <form id="exam-setup" class="setup">
         <label for="ex-min">Длительность</label>
         <select id="ex-min">${EXAM_MINUTES.map((m) => `<option value="${m}" ${m === 60 ? 'selected' : ''}>${m} минут</option>`).join('')}</select>
         <label class="switch"><input type="checkbox" id="ex-run" checked> Можно запускать запросы перед сдачей</label>
+        <label class="switch"><input type="checkbox" id="ex-pen"> Пауза после ошибки</label>
         <button class="btn pen" type="submit">Начать экзамен</button>
       </form>
-      <p class="small muted">Сдать или нет, решает число баллов. Порог ${PASS} из 100 и время штрафов я задал сам: точных цифр для экзамена по SQL в открытых источниках нет. Если на твоём экзамене запускать запросы нельзя, выключи запуск и тренируйся вслепую.</p>
+      <p class="small muted">Сдать или нет, решает число баллов. Порог ${PASS} из 100 и длину паузы я задал сам: точных цифр для экзамена по SQL в открытых источниках нет. Если на твоём экзамене запускать запросы нельзя, выключи запуск и тренируйся вслепую.</p>
       ${hist.length ? `<h3>Прошлые попытки</h3><ul class="hist">${hist.map((t) => `<li><b>${t.score}/100</b> <span class="muted">${new Date(t.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} · ${Math.round(t.dur / 60)} мин · сдач ${t.tries}</span></li>`).join('')}</ul>` : ''}
     </article>`;
     $('#exam-setup').onsubmit = (e) => {
       e.preventDefault();
       const minutes = +$('#ex-min').value;
-      exam = { start: now(), end: now() + minutes * MIN, minutes, allowRun: $('#ex-run').checked, level: 1, points: 0, used: [], attempts: [], fails: 0, cooldownUntil: 0, done: false, notes: '', draft: '' };
+      exam = { start: now(), end: now() + minutes * MIN, minutes, allowRun: $('#ex-run').checked, penalty: $('#ex-pen').checked, level: 1, points: 0, used: [], attempts: [], fails: 0, cooldownUntil: 0, done: false, notes: '', draft: '' };
       exam.current = pickTask(1);
       examSave(); views.exam(); window.scrollTo(0, 0);
     };
