@@ -685,9 +685,15 @@ views.test = () => {
     qa.innerHTML = `<div class="options">${q.options.map((o, j) => `<button type="button" class="opt" data-j="${j}"><code>${esc(o)}</code></button>`).join('')}</div>`;
     qa.onclick = (e) => { const b = e.target.closest('.opt'); if (!b || qa.dataset.done) return; qa.dataset.done = 1; const j = +b.dataset.j; qa.querySelectorAll('.opt').forEach((x, k) => { x.disabled = true; x.classList.toggle('right', k === q.correct); x.classList.toggle('wrong', k === j && j !== q.correct); }); finish(j === q.correct, q.options[j], q.options[q.correct]); };
   } else if (q.type === 'count') {
-    qa.innerHTML = `<form class="count" id="cf"><label for="cnt">Строк в результате:</label><input id="cnt" type="number" min="0" inputmode="numeric" required><button class="btn" type="submit">Ответить</button></form>`;
+    qa.innerHTML = `<div id="qdata"></div><form class="count" id="cf"><label for="cnt">Строк в результате:</label><input id="cnt" type="number" min="0" inputmode="numeric" required><button class="btn" type="submit">Ответить</button></form>`;
     $('#cf').onsubmit = async (e) => { e.preventDefault(); const v = +$('#cnt').value; $('#cf button').disabled = true; $('#cnt').readOnly = true; const res = await run(q.sql); finish(v === res.rows.length, String(v), String(res.rows.length)); fb.append(h(`<div>${tableHTML(res)}</div>`)); };
     $('#cnt').focus();
+    // данные, по которым нужно посчитать ответ
+    (async () => {
+      const parts = [];
+      for (const t of tablesOf(q.sql)) parts.push(`<p class="eyebrow">Таблица ${t}: посчитай по этим данным</p>${tableHTML(await run(`SELECT * FROM ${t} ORDER BY id`))}`);
+      const el = $('#qdata'); if (el) el.innerHTML = parts.join('');
+    })();
   } else {
     const r = runner({ rows: 5, noRun: true, showViz: false, onCheck: async (sql, { bar }) => { bar.querySelector('[data-a=check]').disabled = true; r.ta.readOnly = true; const res = await check(sql, q); finish(res.ok, res.ok ? 'верный запрос' : res.reason, q.ref); } });
     qa.append(r.el);
