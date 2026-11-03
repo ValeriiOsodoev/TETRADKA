@@ -66,6 +66,8 @@ p { margin: 0 0 .8em; }
 #nav a:hover { color: var(--ink); background: var(--paper); }
 #nav a.on { color: var(--ink); background: var(--pen-soft); }
 #due-badge { font: 600 .7rem var(--f-mono); background: var(--red); color: var(--sheet); border-radius: 10px; padding: 1px 6px; margin-left: 4px; vertical-align: 1px; }
+.back { color: var(--muted); text-decoration: none; font-size: .9rem; white-space: nowrap; }
+.back:hover { color: var(--ink); }
 #auth { display: flex; align-items: center; gap: 8px; font-size: .8rem; line-height: 1.2; white-space: nowrap; }
 #auth small { display: block; color: var(--muted); }
 #auth .btn { margin-left: 6px; }
@@ -308,9 +310,9 @@ details summary { cursor: pointer; }
 <body>
 <header class="top">
   <div class="top-in">
-    <a class="brand" href="/" title="На главную Тетрадки">Тетрадка<span>·</span>SQL</a>
+    <a class="brand" href="#home" title="Главная раздела SQL">SQL<span>·</span>21</a>
     <nav id="nav" aria-label="Разделы">
-      <a href="#home">Обзор</a>
+      <a href="#home">Главная</a>
       <a href="#learn">Теория</a>
       <a href="#practice">Тренажёр</a>
       <a href="#review">Повторение<span id="due-badge" hidden></span></a>
@@ -318,6 +320,7 @@ details summary { cursor: pointer; }
       <a href="#exam">Экзамен</a>
       <a href="#sandbox">Песочница</a>
     </nav>
+    <a class="back" href="/" title="Математика и алгоритмы">← Тетрадка</a>
     <div id="auth" aria-live="polite"></div>
   </div>
 </header>
