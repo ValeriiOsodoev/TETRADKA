@@ -173,6 +173,14 @@ function forbidden(sql, task) {
   const clean = stripSql(sql);
   return (task.forbid || []).find((re) => re.test(clean));
 }
+// подсказка для запросов с JOIN: чаще всего ошибка не в WHERE, а в ON
+function joinAdvice(sql) {
+  const clean = stripSql(sql);
+  if (!/\bjoin\b/i.test(clean)) return '';
+  const ons = [...clean.matchAll(/\bon\s+([\s\S]*?)(?=\b(?:join|left|right|full|inner|cross|where|order|group|limit|union|intersect|except)\b|$)/gi)].map((m) => m[1]);
+  if (ons.some((on) => /\b[a-z_]\w*\.id\s*=\s*[a-z_]\w*\.id\b/i.test(on))) return 'Похоже, в ON сравниваются два id. Так совпадает номер строки одной таблицы с номером строки другой, а это случайное совпадение. Склеивать нужно по ссылке: например, po.person_id = p.id (номерок человека в заказе равен номеру человека).';
+  return 'Проверь условия ON у каждого JOIN: склеивать нужно по ссылке «таблица_id = id», например po.person_id = p.id. Потом проверь WHERE.';
+}
 async function check(sql, task) {
   if (!sql.trim()) return { ok: false, reason: 'Пустой ответ.' };
   const bad = forbidden(sql, task);
@@ -182,7 +190,7 @@ async function check(sql, task) {
   ref = await run(task.ref);
   const res = { mine, ref };
   if (mine.fields.length !== ref.fields.length) return { ...res, ok: false, reason: `Колонок в результате ${mine.fields.length}, а нужно ${ref.fields.length}.` };
-  if (mine.rows.length !== ref.rows.length) return { ...res, ok: false, reason: `Строк в результате ${mine.rows.length}, а нужно ${ref.rows.length}. Проверь условие WHERE${/limit/i.test(task.ref) ? ' и LIMIT' : ''}.` };
+  if (mine.rows.length !== ref.rows.length) return { ...res, ok: false, reason: `Строк в результате ${mine.rows.length}, а нужно ${ref.rows.length}. ${joinAdvice(sql) || `Проверь условие WHERE${/limit/i.test(task.ref) ? ' и LIMIT' : ''}.`}` };
   const a = mine.rows.map(rowKey), b = ref.rows.map(rowKey);
   const same = a.every((x, i) => x === b[i]);
   if (!same) {
@@ -191,7 +199,7 @@ async function check(sql, task) {
       if (task.ordered) return { ...res, ok: false, reason: 'Строки верные, но порядок другой. Проверь ORDER BY и направление ASC/DESC.' };
     } else {
       const i = a.findIndex((x) => !b.includes(x));
-      return { ...res, ok: false, reason: `Значения не совпадают${i >= 0 ? `, например строка ${i + 1}: ${mine.rows[i].map((v) => fmt(v) ?? 'NULL').join(' | ')}` : ''}. Проверь колонки и условия.` };
+      return { ...res, ok: false, reason: `Значения не совпадают${i >= 0 ? `, например строка ${i + 1}: ${mine.rows[i].map((v) => fmt(v) ?? 'NULL').join(' | ')}` : ''}. ${joinAdvice(sql) || 'Проверь колонки и условия.'}` };
     }
   }
   if (task.checkNames) {
